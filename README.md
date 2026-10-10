@@ -6,10 +6,10 @@ authorized to test**, and tells it how to fix them. It never exploits, brute-for
 or runs destructive actions. See [CLAUDE.md](CLAUDE.md) for the non-negotiable rules
 and [docs/](docs/) for the PRD, architecture, and scope-authorization design.
 
-> **Status: Phase 1 (Scope Authorization Gate) done.** Accounts, orgs, roles,
-> audit log, scopes with ownership verification, and the gate every scan must
-> pass. No scan **engine** exists yet (Phase 2+): an authorized scan is recorded
-> as QUEUED and nothing executes it.
+> **Status: Phase 2 (Discovery) done.** Accounts, orgs, roles, audit log, scopes
+> with ownership verification, the Scope Authorization Gate, a BullMQ scan queue,
+> the sandboxed **discovery worker** (passive subdomains, DNS, HTTP(S) liveness)
+> and the asset inventory dashboard. Assessment engines (network/TLS/web) are Phase 3.
 
 ## Repository layout
 
@@ -18,14 +18,16 @@ apps/
   api/        Fastify + Zod API: auth (argon2id + JWT + rotating refresh), RBAC, orgs, invites
   web/        Next.js (App Router) + Tailwind dashboard (landing + sign-in for now)
 packages/
-  core/       Shared types, RBAC matrix, append-only audit helper, scope-gate stub
-  db/         Prisma schema, migrations, client
+  core/       Shared types, RBAC, audit helper, Scope Authorization Gate, SSRF guard
+  db/         Prisma schema, migrations, client, gate repository
+  worker-kit/ Job lifecycle every worker shares: gate re-check, heartbeat, safe tool runner
   cve/        NVD mirror + version→CVE matching (empty until Phase 3)
-docs/         PRD, ARCHITECTURE, SCOPE_AUTHORIZATION, POWER_UP
+workers/
+  discovery/  crt.sh + subfinder (passive) → DNS → httpx liveness, in a sandboxed container
+docs/         PRD, ARCHITECTURE, SCOPE_AUTHORIZATION, POWER_UP, DEPLOY_VPS
 docker-compose.yml   Optional local Postgres, Redis, MinIO
 ```
 
-`workers/` and `infra/` arrive with the discovery and engine phases.
 
 ## Prerequisites
 
@@ -70,6 +72,7 @@ npm run db:migrate           # dev only: create a new migration after editing sc
 ```bash
 npm run dev:api              # http://127.0.0.1:4000  (GET /health)
 npm run dev:web              # http://localhost:3000
+npm run dev:worker:discovery # local worker (needs subfinder + httpx on PATH); production uses Docker on the VPS
 ```
 
 Create an account (there's no sign-up page yet):
@@ -109,6 +112,22 @@ Then sign in at http://localhost:3000/login.
 
 Non-members of an org get `404` (not `403`) so org ids can't be probed.
 Invite tokens are returned in the API response until email delivery lands in Phase 6.
+
+## Discovery (Phase 2)
+
+"Find assets" on a proven boundary queues a DISCOVERY scan. The worker
+([workers/discovery](workers/discovery/)) re-checks the gate, then:
+
+1. **Subdomains, passively:** crt.sh certificate logs + subfinder. Neither contacts your hosts.
+2. **DNS** through public resolvers; names that only exist because of wildcard DNS are dropped.
+   Names pointing at private/reserved IPs are recorded but **never contacted**.
+3. **Liveness:** one ordinary HTTP(S) request per host on 80/443 via httpx, at the scope's
+   rate limit, without following redirects.
+
+Anything a tool returns outside the boundary is dropped before it reaches the database.
+Port scanning is not part of discovery; it's the approval-gated NETWORK engine (Phase 3).
+While a job runs, the worker re-checks the gate every 15 s, so the kill-switch, a scan kill
+or a revoked/expired scope stops it. Deploy workers with [docs/DEPLOY_VPS.md](docs/DEPLOY_VPS.md).
 
 ## Scope Authorization Gate
 
