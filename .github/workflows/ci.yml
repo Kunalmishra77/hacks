@@ -28,11 +28,18 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U aegis"
           --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 10
 
     env:
       DATABASE_URL: postgresql://aegis:aegis_ci@localhost:5432/aegis_ci?schema=public
       DIRECT_URL: postgresql://aegis:aegis_ci@localhost:5432/aegis_ci?schema=public
       TEST_DATABASE_URL: postgresql://aegis:aegis_ci@localhost:5432/aegis_ci?schema=public
+      TEST_REDIS_URL: redis://localhost:6379
       NEXT_TELEMETRY_DISABLED: "1"
 
     steps:
@@ -56,7 +63,12 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      # Unit tests + Postgres integration tests (append-only audit trigger, Prisma store).
-      # The scope-gate suite joins this step in Phase 1 and must stay green on every commit.
+      # The Scope Authorization Gate suite is safety-critical: it runs first and
+      # on its own, so a gate regression is the first thing a red build shows.
+      - name: Scope gate tests
+        run: npx vitest run test/scopeGate.test.ts test/targets.test.ts
+        working-directory: packages/core
+
+      # Everything: unit tests + Postgres/Redis integration tests.
       - name: Test
         run: npm test

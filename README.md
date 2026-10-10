@@ -6,9 +6,10 @@ authorized to test**, and tells it how to fix them. It never exploits, brute-for
 or runs destructive actions. See [CLAUDE.md](CLAUDE.md) for the non-negotiable rules
 and [docs/](docs/) for the PRD, architecture, and scope-authorization design.
 
-> **Status: Phase 0 (Foundation).** Accounts, orgs, roles, and the audit log.
-> No scanning exists yet. The scope gate (`packages/core/src/scopeGate.ts`) is a
-> stub that **rejects every request** until Phase 1 implements it.
+> **Status: Phase 1 (Scope Authorization Gate) done.** Accounts, orgs, roles,
+> audit log, scopes with ownership verification, and the gate every scan must
+> pass. No scan **engine** exists yet (Phase 2+): an authorized scan is recorded
+> as QUEUED and nothing executes it.
 
 ## Repository layout
 
@@ -95,9 +96,47 @@ Then sign in at http://localhost:3000/login.
 | GET | `/orgs/:orgId/members` | Viewer+ |
 | POST | `/orgs/:orgId/invites` | Admin+ (only Owners can grant Owner) |
 | POST | `/invites/accept` | authenticated user whose email matches the invite |
+| POST | `/orgs/:orgId/scopes` | Admin+; returns verification instructions |
+| GET | `/orgs/:orgId/scopes`, `/orgs/:orgId/scopes/:scopeId` | Viewer+ |
+| POST | `/orgs/:orgId/scopes/:scopeId/verify` | Admin+; `{"method":"DNS_TXT"|"HTTP_FILE"|"CLOUD_ROLE"}`; 10 tries/hour |
+| POST | `/orgs/:orgId/scopes/:scopeId/revoke` | Admin+; kills the scope's active scans |
+| GET | `/orgs/:orgId/assets` | Viewer+ |
+| POST | `/orgs/:orgId/scans` | Analyst+; `{assetId, engine}` → gate → 201 QUEUED / 202 needs approval / 403 / 429 |
+| GET | `/orgs/:orgId/scans` | Viewer+ |
+| POST | `/orgs/:orgId/scans/:scanId/approve` | Admin+ |
+| POST | `/orgs/:orgId/scans/:scanId/kill` | Analyst+ |
+| POST | `/orgs/:orgId/kill-switch` | `{engaged:true}` Analyst+, `{engaged:false}` Admin+ |
 
 Non-members of an org get `404` (not `403`) so org ids can't be probed.
 Invite tokens are returned in the API response until email delivery lands in Phase 6.
+
+## Scope Authorization Gate
+
+Every scan goes through `authorize()` in [packages/core/src/scopeGate.ts](packages/core/src/scopeGate.ts),
+the single choke point from docs/SCOPE_AUTHORIZATION.md. A scan is allowed only if:
+
+1. it targets a stored **Asset** (never a raw hostname/IP), in a **Scope** of the same org;
+2. the scope is **VERIFIED** and not past `expiresAt` (90 days), not revoked;
+3. the asset's address is actually inside the scope value (apex/subdomain, CIDR, AWS account);
+4. the engine is in the scope's `allowedEngines`;
+5. neither the org kill-switch nor the scan's own kill is engaged;
+6. heavier engines (NETWORK, CLOUD) have an Admin approval;
+7. the org is under its concurrent-scan cap and the scope under its scan-start rate (Redis).
+
+Otherwise it is rejected (403), held for approval (202) or throttled (429 + Retry-After).
+Every decision is audited. Workers call the same function in `job_start` mode, and it
+refuses jobs whose payload doesn't match the scan record (tampered target, asset, engine or org).
+
+**Ownership verification** (proves control; never probes the target):
+
+| Scope type | Methods | Notes |
+|---|---|---|
+| DOMAIN (`example.com`) | DNS TXT `aegis-verify=…` on the apex, or HTTPS file `/.well-known/aegis-verify.txt` | public resolvers; HTTPS only, no redirects, 4 KiB cap |
+| IP_RANGE (single public host, `/32`/`/128`) | HTTPS file on that IP | wider ranges need a later manual process |
+| CLOUD_ACCOUNT (`aws:<12 digits>` + role ARN) | AssumeRole with our external ID | session capped by the read-only SecurityAudit policy |
+
+All outbound verification traffic goes through an SSRF guard that refuses private,
+loopback, link-local (incl. 169.254.169.254) and reserved addresses.
 
 ## Security notes
 
@@ -112,6 +151,7 @@ Invite tokens are returned in the API response until email delivery lands in Pha
 npm run typecheck
 npm test                     # unit tests (in-memory store)
 TEST_DATABASE_URL=postgresql://... npm test   # + Postgres integration tests (migrated DB)
+TEST_REDIS_URL=redis://... npm test           # + Redis rate-limiter integration test
 ```
 
 CI (`.github/workflows/ci.yml`) runs install → migrate → web build → typecheck →
