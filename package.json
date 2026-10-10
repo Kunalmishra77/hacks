@@ -1,0 +1,29 @@
+{
+  "name": "aegis",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Aegis ASM — authorized, defensive attack-surface management",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "dev:api": "npm run dev -w @aegis/api",
+    "dev:web": "npm run dev -w @aegis/web",
+    "db:generate": "npm run generate -w @aegis/db",
+    "db:migrate": "npm run migrate:dev -w @aegis/db",
+    "db:deploy": "npm run migrate:deploy -w @aegis/db",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "dotenv-cli": "^11.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.6.3",
+    "vitest": "^3.2.4"
+  }
+}
