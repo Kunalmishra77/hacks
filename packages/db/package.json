@@ -17,6 +17,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@aegis/core": "*",
     "@prisma/client": "^6.19.3"
   },
   "devDependencies": {

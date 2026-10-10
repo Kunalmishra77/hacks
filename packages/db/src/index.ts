@@ -14,3 +14,5 @@ export const prisma: PrismaClient =
 if (process.env.NODE_ENV !== "production") {
   globalForPrisma.__aegisPrisma = prisma;
 }
+
+export { createPrismaGateRepository } from "./gateRepository.js";

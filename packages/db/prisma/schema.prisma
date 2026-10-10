@@ -5,7 +5,9 @@
 // rejects UPDATE and DELETE on "AuditEvent". Do not remove it.
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // native for dev/CI; musl for the alpine worker images.
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
@@ -246,12 +248,16 @@ model Scope {
 }
 
 model Asset {
-  id        String    @id @default(uuid()) @db.Uuid
-  scopeId   String    @db.Uuid
-  kind      AssetKind
-  address   String // hostname, IP, ip:port, or cloud ARN/resource id
-  firstSeen DateTime  @default(now())
-  lastSeen  DateTime  @default(now())
+  id                 String    @id @default(uuid()) @db.Uuid
+  scopeId            String    @db.Uuid
+  kind               AssetKind
+  address            String // hostname, IP, ip:port, or cloud ARN/resource id
+  firstSeen          DateTime  @default(now())
+  lastSeen           DateTime  @default(now())
+  // Discovery facts: resolved IPs, CNAME, HTTP status/title/server, etc.
+  metadata           Json?
+  // Scan that first found this asset (null for the scope's seed asset).
+  discoveredByScanId String?   @db.Uuid
 
   scope    Scope     @relation(fields: [scopeId], references: [id], onDelete: Cascade)
   scans    Scan[]
