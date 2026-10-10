@@ -1,0 +1,42 @@
+# Scan workers for the VPS (docs/DEPLOY_VPS.md). Each worker is a sandboxed,
+# resource-limited container on its own network, whose egress the host
+# firewall restricts (see the doc).
+#
+#   docker compose -f docker-compose.workers.yml --env-file workers.env up -d --build
+name: aegis-workers
+
+x-sandbox: &sandbox
+  read_only: true
+  tmpfs:
+    - /tmp:size=128m,mode=1777
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+  pids_limit: 256
+  restart: unless-stopped
+  networks: [workers]
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "5" }
+
+services:
+  discovery:
+    <<: *sandbox
+    build:
+      context: .
+      dockerfile: workers/discovery/Dockerfile
+    image: aegis/worker-discovery:latest
+    # Only what the worker needs. No API keys, no JWT secrets.
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in workers.env}
+      REDIS_URL: ${REDIS_URL:?set REDIS_URL in workers.env}
+      DISCOVERY_CONCURRENCY: ${DISCOVERY_CONCURRENCY:-1}
+    mem_limit: 1g
+    cpus: 1.0
+
+networks:
+  workers:
+    driver: bridge
+    driver_opts:
+      # Fixed bridge name so the host firewall rules can target it.
+      com.docker.network.bridge.name: aegis-workers
