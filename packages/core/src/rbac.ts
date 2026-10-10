@@ -25,7 +25,10 @@ export const PERMISSIONS = {
   "scan.run": "ANALYST",
   "scan.approve": "ADMIN",
   "scan.kill": "ANALYST",
-  "killswitch.engage": "ADMIN",
+  // Anyone who can start scans can hit the emergency stop; only Admins can
+  // lift it again.
+  "killswitch.engage": "ANALYST",
+  "killswitch.release": "ADMIN",
   "finding.read": "VIEWER",
   "finding.triage": "ANALYST",
   "report.read": "VIEWER",

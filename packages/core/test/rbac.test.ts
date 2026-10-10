@@ -21,6 +21,9 @@ describe("rbac", () => {
     expect(can("ADMIN", "scan.approve")).toBe(true);
     expect(can("ADMIN", "billing.manage")).toBe(false);
     expect(can("OWNER", "org.delete")).toBe(true);
+    expect(can("ANALYST", "killswitch.engage")).toBe(true);
+    expect(can("ANALYST", "killswitch.release")).toBe(false);
+    expect(can("VIEWER", "killswitch.engage")).toBe(false);
   });
 
   it("grants every permission to Owner", () => {

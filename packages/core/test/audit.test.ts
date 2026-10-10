@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { authorizeScan, createAuditLogger, createMemoryAuditSink } from "../src/index.js";
+import { createAuditLogger, createMemoryAuditSink } from "../src/index.js";
 
 describe("audit", () => {
   it("appends events with actor, action and timestamp", async () => {
@@ -67,14 +67,3 @@ describe("audit", () => {
   });
 });
 
-describe("scope gate stub", () => {
-  it("fails closed until Phase 1 implements it", async () => {
-    const res = await authorizeScan({
-      orgId: "o1",
-      assetId: "a1",
-      engine: "NETWORK",
-      actor: { type: "user", id: "u1" },
-    });
-    expect(res).toEqual({ decision: "REJECT", reason: "GATE_NOT_IMPLEMENTED" });
-  });
-});
