@@ -2,21 +2,24 @@ import Link from "next/link";
 
 export default function Home() {
   return (
-    <main className="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-20">
-      <h1 className="text-3xl font-semibold tracking-tight">Aegis ASM</h1>
-      <p className="text-slate-600 dark:text-slate-400">
-        Find what&apos;s exposed, misconfigured, or affected by known CVEs, only in assets you own or are
-        explicitly authorized to assess.
+    <main className="mx-auto flex min-h-screen max-w-3xl flex-col justify-center px-6 py-20">
+      <h1 className="text-5xl font-semibold leading-[1.05] tracking-tight sm:text-6xl">
+        Know your edge
+        <span className="block border-l-4 border-boundary pl-4 text-muted">before someone else maps it.</span>
+      </h1>
+      <p className="mt-8 max-w-xl text-lg leading-relaxed text-muted">
+        Aegis finds the domains, hosts and web services you own, and shows what&apos;s exposed. It only looks inside
+        boundaries you&apos;ve proven are yours, and it never attacks anything.
       </p>
-      <p className="text-sm text-slate-500">
-        Phase 0 foundation: accounts, organizations, roles and audit log. Scanning is not enabled yet.
-      </p>
-      <div>
-        <Link
-          href="/login"
-          className="inline-block rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-300"
-        >
+      <div className="mt-10 flex gap-3">
+        <Link href="/login" className="rounded-md bg-ink px-5 py-2.5 text-sm font-semibold text-sheet hover:bg-ink/85">
           Sign in
+        </Link>
+        <Link
+          href="/login?mode=register"
+          className="rounded-md border border-ink/25 px-5 py-2.5 text-sm font-semibold hover:border-ink/60"
+        >
+          Create an account
         </Link>
       </div>
     </main>

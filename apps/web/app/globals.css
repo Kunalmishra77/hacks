@@ -1,9 +1,43 @@
 @import "tailwindcss";
 
+/* Survey-sheet palette: ownership is a boundary you prove, and everything
+   Aegis looks at sits inside it. */
+@theme {
+  --color-ground: #edf1ee;
+  --color-sheet: #f8faf8;
+  --color-ink: #13221d;
+  --color-muted: #55665e;
+  --color-line: #c9d3ce;
+  --color-boundary: #b8326b;
+  --color-ok: #1f7a4d;
+  --color-wait: #8a6609;
+  --color-stop: #c42021;
+
+  --font-sans: var(--font-hanken), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, monospace;
+}
+
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
 }
 
 body {
-  @apply bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100;
+  background: var(--color-ground);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-boundary);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+  }
 }
