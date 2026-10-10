@@ -1,4 +1,14 @@
-import type { AuditSink, Role } from "@aegis/core";
+import type {
+  AssetKind,
+  AuditSink,
+  Engine,
+  GateRepository,
+  Role,
+  ScanStatus,
+  ScopeStatus,
+  ScopeType,
+  VerificationMethod,
+} from "@aegis/core";
 
 // Persistence boundary for the API. Routes depend on this interface only, so
 // they run against Postgres (prisma.ts) in production and an in-memory
@@ -46,6 +56,54 @@ export interface RefreshTokenRecord {
   revokedAt: Date | null;
 }
 
+export interface ScopeRecord {
+  id: string;
+  orgId: string;
+  type: ScopeType;
+  value: string;
+  status: ScopeStatus;
+  verificationMethod: VerificationMethod | null;
+  verificationToken: string | null;
+  verifiedAt: Date | null;
+  expiresAt: Date | null;
+  revokedAt: Date | null;
+  allowedEngines: Engine[];
+  maxRequestsPerSec: number;
+  cloudRoleArn: string | null;
+  externalId: string | null;
+  lastVerificationAt: Date | null;
+  lastVerificationError: string | null;
+  createdById: string;
+  createdAt: Date;
+}
+
+export interface AssetRecord {
+  id: string;
+  scopeId: string;
+  kind: AssetKind;
+  address: string;
+  firstSeen: Date;
+  lastSeen: Date;
+}
+
+export interface ScanRecord {
+  id: string;
+  orgId: string;
+  scopeId: string;
+  assetId: string | null;
+  engine: Engine;
+  status: ScanStatus;
+  requestedById: string;
+  approvedById: string | null;
+  approvedAt: Date | null;
+  killedAt: Date | null;
+  killedById: string | null;
+  createdAt: Date;
+}
+
+/** Statuses a kill (org kill-switch, scope revoke, scan kill) moves to KILLED. */
+export const ACTIVE_SCAN_STATUSES: readonly ScanStatus[] = ["PENDING_APPROVAL", "QUEUED", "RUNNING"];
+
 export interface Store {
   users: {
     findByEmail(email: string): Promise<UserRecord | null>;
@@ -56,7 +114,56 @@ export interface Store {
   orgs: {
     create(input: { name: string; slug: string }): Promise<OrgRecord>;
     findById(id: string): Promise<OrgRecord | null>;
+    setKillSwitch(id: string, engaged: boolean, byId: string, at: Date): Promise<void>;
   };
+  scopes: {
+    create(input: {
+      orgId: string;
+      type: ScopeType;
+      value: string;
+      allowedEngines: Engine[];
+      verificationToken: string;
+      cloudRoleArn: string | null;
+      externalId: string | null;
+      createdById: string;
+    }): Promise<ScopeRecord>;
+    /** Org-scoped lookup: never returns another org's scope. */
+    find(orgId: string, id: string): Promise<ScopeRecord | null>;
+    listByOrg(orgId: string): Promise<ScopeRecord[]>;
+    markVerified(
+      id: string,
+      input: { method: VerificationMethod; at: Date; expiresAt: Date },
+    ): Promise<ScopeRecord>;
+    recordVerificationFailure(id: string, at: Date, error: string): Promise<void>;
+    revoke(id: string, at: Date): Promise<void>;
+  };
+  assets: {
+    /** Creates or touches (lastSeen) an asset. Only ever called for verified scopes. */
+    upsert(input: { scopeId: string; kind: AssetKind; address: string; at: Date }): Promise<AssetRecord>;
+    listByOrg(orgId: string, scopeId?: string): Promise<AssetRecord[]>;
+  };
+  scans: {
+    create(input: {
+      orgId: string;
+      scopeId: string;
+      assetId: string;
+      engine: Engine;
+      status: "PENDING_APPROVAL" | "QUEUED";
+      requestedById: string;
+    }): Promise<ScanRecord>;
+    find(orgId: string, id: string): Promise<ScanRecord | null>;
+    listByOrg(orgId: string): Promise<ScanRecord[]>;
+    /** Records approval on a PENDING_APPROVAL scan. Returns false if not pending. */
+    approve(id: string, approvedById: string, at: Date): Promise<boolean>;
+    /** Moves PENDING_APPROVAL → QUEUED or REJECTED. Returns false if no longer pending. */
+    resolvePending(id: string, status: "QUEUED" | "REJECTED"): Promise<boolean>;
+    /** Kills one scan if active. Returns false if it was not active. */
+    kill(id: string, byId: string, at: Date): Promise<boolean>;
+    /** Kills all active scans for an org (or one scope). Returns how many. */
+    killActive(filter: { orgId: string; scopeId?: string }, byId: string, at: Date): Promise<number>;
+  };
+  /** Read-only view the Scope Authorization Gate uses. */
+  gate: GateRepository;
   memberships: {
     find(orgId: string, userId: string): Promise<MembershipRecord | null>;
     create(input: { orgId: string; userId: string; role: Role }): Promise<MembershipRecord>;

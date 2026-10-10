@@ -1,6 +1,6 @@
 import { Prisma, type PrismaClient } from "@aegis/db";
 import type { AuditEvent } from "@aegis/core";
-import { UniqueViolationError, type Store } from "./types.js";
+import { ACTIVE_SCAN_STATUSES, UniqueViolationError, type Store } from "./types.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -42,6 +42,41 @@ const inviteSelect = {
   acceptedAt: true,
 } as const;
 
+const scopeSelect = {
+  id: true,
+  orgId: true,
+  type: true,
+  value: true,
+  status: true,
+  verificationMethod: true,
+  verificationToken: true,
+  verifiedAt: true,
+  expiresAt: true,
+  revokedAt: true,
+  allowedEngines: true,
+  maxRequestsPerSec: true,
+  cloudRoleArn: true,
+  externalId: true,
+  lastVerificationAt: true,
+  lastVerificationError: true,
+  createdById: true,
+  createdAt: true,
+} as const;
+const scanSelect = {
+  id: true,
+  orgId: true,
+  scopeId: true,
+  assetId: true,
+  engine: true,
+  status: true,
+  requestedById: true,
+  approvedById: true,
+  approvedAt: true,
+  killedAt: true,
+  killedById: true,
+  createdAt: true,
+} as const;
+
 export function createPrismaStore(client: PrismaClient): Store {
   return build(client, client);
 }
@@ -59,6 +94,124 @@ function build(db: Db, root: PrismaClient): Store {
     orgs: {
       create: (input) => db.org.create({ data: input, select: orgSelect }).catch(rethrowUnique),
       findById: (id) => db.org.findUnique({ where: { id }, select: orgSelect }),
+      async setKillSwitch(id, engaged, byId, at) {
+        await db.org.update({
+          where: { id },
+          data: { killSwitchEngaged: engaged, killSwitchAt: at, killSwitchById: byId },
+        });
+      },
+    },
+    scopes: {
+      create: (input) => db.scope.create({ data: input, select: scopeSelect }).catch(rethrowUnique),
+      find: (orgId, id) => db.scope.findFirst({ where: { id, orgId }, select: scopeSelect }),
+      listByOrg: (orgId) => db.scope.findMany({ where: { orgId }, select: scopeSelect, orderBy: { createdAt: "asc" } }),
+      markVerified: (id, { method, at, expiresAt }) =>
+        db.scope.update({
+          where: { id },
+          data: {
+            status: "VERIFIED",
+            verificationMethod: method,
+            verifiedAt: at,
+            expiresAt,
+            lastVerificationAt: at,
+            lastVerificationError: null,
+          },
+          select: scopeSelect,
+        }),
+      async recordVerificationFailure(id, at, error) {
+        await db.scope.update({ where: { id }, data: { lastVerificationAt: at, lastVerificationError: error } });
+      },
+      async revoke(id, at) {
+        await db.scope.update({ where: { id }, data: { status: "REVOKED", revokedAt: at } });
+      },
+    },
+    assets: {
+      upsert: ({ scopeId, kind, address, at }) =>
+        db.asset.upsert({
+          where: { scopeId_kind_address: { scopeId, kind, address } },
+          create: { scopeId, kind, address, firstSeen: at, lastSeen: at },
+          update: { lastSeen: at },
+        }),
+      listByOrg: (orgId, scopeId) =>
+        db.asset.findMany({
+          where: { scope: { orgId }, ...(scopeId ? { scopeId } : {}) },
+          orderBy: { firstSeen: "asc" },
+        }),
+    },
+    scans: {
+      create: (input) => db.scan.create({ data: input, select: scanSelect }),
+      find: (orgId, id) => db.scan.findFirst({ where: { id, orgId }, select: scanSelect }),
+      listByOrg: (orgId) =>
+        db.scan.findMany({ where: { orgId }, select: scanSelect, orderBy: { createdAt: "desc" }, take: 200 }),
+      async approve(id, approvedById, at) {
+        const r = await db.scan.updateMany({
+          where: { id, status: "PENDING_APPROVAL" },
+          data: { approvedById, approvedAt: at },
+        });
+        return r.count === 1;
+      },
+      async resolvePending(id, status) {
+        const r = await db.scan.updateMany({ where: { id, status: "PENDING_APPROVAL" }, data: { status } });
+        return r.count === 1;
+      },
+      async kill(id, byId, at) {
+        const r = await db.scan.updateMany({
+          where: { id, status: { in: [...ACTIVE_SCAN_STATUSES] } },
+          data: { status: "KILLED", killedAt: at, killedById: byId },
+        });
+        return r.count === 1;
+      },
+      async killActive({ orgId, scopeId }, byId, at) {
+        const r = await db.scan.updateMany({
+          where: { orgId, ...(scopeId ? { scopeId } : {}), status: { in: [...ACTIVE_SCAN_STATUSES] } },
+          data: { status: "KILLED", killedAt: at, killedById: byId },
+        });
+        return r.count;
+      },
+    },
+    gate: {
+      async findAssetWithScope(assetId) {
+        const a = await db.asset.findUnique({
+          where: { id: assetId },
+          select: {
+            id: true,
+            scopeId: true,
+            kind: true,
+            address: true,
+            scope: {
+              select: {
+                id: true,
+                orgId: true,
+                type: true,
+                value: true,
+                status: true,
+                expiresAt: true,
+                allowedEngines: true,
+                maxRequestsPerSec: true,
+              },
+            },
+          },
+        });
+        if (!a) return null;
+        const { scope, ...asset } = a;
+        return { asset, scope };
+      },
+      findOrg: (orgId) => db.org.findUnique({ where: { id: orgId }, select: { id: true, killSwitchEngaged: true } }),
+      findScan: (scanId) =>
+        db.scan.findUnique({
+          where: { id: scanId },
+          select: {
+            id: true,
+            orgId: true,
+            scopeId: true,
+            assetId: true,
+            engine: true,
+            status: true,
+            approvedById: true,
+            killedAt: true,
+          },
+        }),
+      countActiveScans: (orgId) => db.scan.count({ where: { orgId, status: { in: ["QUEUED", "RUNNING"] } } }),
     },
     memberships: {
       find: (orgId, userId) => db.membership.findUnique({ where: { orgId_userId: { orgId, userId } } }),

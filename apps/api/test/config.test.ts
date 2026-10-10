@@ -18,8 +18,11 @@ describe("config", () => {
     expect(() => loadConfig({ ...base, JWT_REFRESH_SECRET: base.JWT_SECRET })).toThrow(/must differ/);
   });
 
-  it("requires secure cookies in production", () => {
-    expect(() => loadConfig({ ...base, NODE_ENV: "production" })).toThrow(/COOKIE_SECURE/);
-    expect(loadConfig({ ...base, NODE_ENV: "production", COOKIE_SECURE: "true" }).cookieSecure).toBe(true);
+  it("requires secure cookies and Redis in production", () => {
+    const redis = { REDIS_URL: "redis://localhost:6379" };
+    expect(() => loadConfig({ ...base, ...redis, NODE_ENV: "production" })).toThrow(/COOKIE_SECURE/);
+    expect(() => loadConfig({ ...base, NODE_ENV: "production", COOKIE_SECURE: "true" })).toThrow(/REDIS_URL/);
+    const prod = loadConfig({ ...base, ...redis, NODE_ENV: "production", COOKIE_SECURE: "true" });
+    expect(prod).toMatchObject({ cookieSecure: true, redisUrl: "redis://localhost:6379" });
   });
 });

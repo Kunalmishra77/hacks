@@ -1,5 +1,5 @@
 import type { FastifyInstance, LightMyRequestResponse } from "fastify";
-import { buildApp } from "../src/app.js";
+import { buildApp, type BuildAppOptions } from "../src/app.js";
 import type { AppConfig } from "../src/config.js";
 import { REFRESH_COOKIE } from "../src/routes/auth.js";
 import { createMemoryStore } from "../src/store/memory.js";
@@ -17,11 +17,16 @@ export const testConfig: AppConfig = {
   refreshTokenTtlDays: 30,
   inviteTtlHours: 72,
   authRateLimit: { max: 1000, timeWindowMs: 60_000 },
+  scopeVerificationTtlDays: 90,
+  gateLimits: { maxConcurrentScansPerOrg: 3, scanStartsPerScopePerMinute: 5 },
 };
 
-export async function makeApp(overrides: Partial<AppConfig> = {}) {
+export async function makeApp(
+  overrides: Partial<AppConfig> = {},
+  deps: Pick<BuildAppOptions, "verifier" | "limiter"> = {},
+) {
   const store = createMemoryStore();
-  const app = await buildApp({ config: { ...testConfig, ...overrides }, store });
+  const app = await buildApp({ config: { ...testConfig, ...overrides }, store, ...deps });
   return { app, store };
 }
 

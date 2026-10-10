@@ -18,6 +18,11 @@ const EnvSchema = z
     ACCESS_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(900),
     REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(30),
     INVITE_TTL_HOURS: z.coerce.number().int().positive().default(72),
+    REDIS_URL: z.string().url().optional().or(z.literal("").transform(() => undefined)),
+    SCOPE_VERIFICATION_TTL_DAYS: z.coerce.number().int().min(1).max(365).default(90),
+    MAX_CONCURRENT_SCANS_PER_ORG: z.coerce.number().int().positive().default(3),
+    SCAN_STARTS_PER_SCOPE_PER_MINUTE: z.coerce.number().int().positive().default(5),
+    AWS_TRUST_PRINCIPAL_ARN: z.string().optional().or(z.literal("").transform(() => undefined)),
   })
   .refine((e) => e.JWT_SECRET !== e.JWT_REFRESH_SECRET, {
     message: "JWT_SECRET and JWT_REFRESH_SECRET must differ",
@@ -38,6 +43,12 @@ export interface AppConfig {
   inviteTtlHours: number;
   /** Per-IP limit on credential endpoints. */
   authRateLimit: { max: number; timeWindowMs: number };
+  /** Required in production; dev/test fall back to an in-process limiter. */
+  redisUrl?: string;
+  scopeVerificationTtlDays: number;
+  gateLimits: { maxConcurrentScansPerOrg: number; scanStartsPerScopePerMinute: number };
+  /** Our AWS principal customers trust in their read-only role. */
+  awsTrustPrincipalArn?: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -49,6 +60,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const e = parsed.data;
   if (e.NODE_ENV === "production" && !e.COOKIE_SECURE) {
     throw new Error("COOKIE_SECURE must be true in production");
+  }
+  if (e.NODE_ENV === "production" && !e.REDIS_URL) {
+    // Rate limits must be shared across API processes in production.
+    throw new Error("REDIS_URL is required in production");
   }
   return {
     env: e.NODE_ENV,
@@ -63,5 +78,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     refreshTokenTtlDays: e.REFRESH_TOKEN_TTL_DAYS,
     inviteTtlHours: e.INVITE_TTL_HOURS,
     authRateLimit: { max: 10, timeWindowMs: 60_000 },
+    redisUrl: e.REDIS_URL,
+    scopeVerificationTtlDays: e.SCOPE_VERIFICATION_TTL_DAYS,
+    gateLimits: {
+      maxConcurrentScansPerOrg: e.MAX_CONCURRENT_SCANS_PER_ORG,
+      scanStartsPerScopePerMinute: e.SCAN_STARTS_PER_SCOPE_PER_MINUTE,
+    },
+    awsTrustPrincipalArn: e.AWS_TRUST_PRINCIPAL_ARN,
   };
 }
