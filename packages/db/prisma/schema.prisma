@@ -9,7 +9,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider  = "postgresql"
   // Supabase: DATABASE_URL = transaction pooler (port 6543, ?pgbouncer=true)
   // for the app; DIRECT_URL = direct connection (port 5432) for migrations.
   // Locally both point at the docker-compose Postgres.
@@ -101,6 +101,7 @@ model Org {
   // Org-level kill-switch (SCOPE_AUTHORIZATION.md §Controls).
   killSwitchEngaged Boolean   @default(false)
   killSwitchAt      DateTime?
+  killSwitchById    String?   @db.Uuid
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
@@ -211,22 +212,28 @@ model ApiKey {
 // them is implemented in Phase 1 (docs/SCOPE_AUTHORIZATION.md).
 
 model Scope {
-  id                 String              @id @default(uuid()) @db.Uuid
-  orgId              String              @db.Uuid
-  type               ScopeType
-  value              String // apex domain, CIDR, or cloud account id
-  status             ScopeStatus         @default(PENDING)
-  verificationMethod VerificationMethod?
-  verificationToken  String? // the token the customer must publish
-  verifiedAt         DateTime?
-  expiresAt          DateTime?
-  revokedAt          DateTime?
-  allowedEngines     Engine[]
+  id                    String              @id @default(uuid()) @db.Uuid
+  orgId                 String              @db.Uuid
+  type                  ScopeType
+  value                 String // apex domain, CIDR, or cloud account id
+  status                ScopeStatus         @default(PENDING)
+  verificationMethod    VerificationMethod?
+  verificationToken     String? // the token the customer must publish
+  verifiedAt            DateTime?
+  expiresAt             DateTime?
+  revokedAt             DateTime?
+  allowedEngines        Engine[]
   // Per-scope rate limit (requests/sec against targets in this scope).
-  maxRequestsPerSec  Int                 @default(5)
-  createdById        String              @db.Uuid
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
+  maxRequestsPerSec     Int                 @default(5)
+  // CLOUD_ACCOUNT only: customer role we assume, and the platform-generated
+  // external ID that prevents confused-deputy use of that role.
+  cloudRoleArn          String?
+  externalId            String?             @unique
+  lastVerificationAt    DateTime?
+  lastVerificationError String?
+  createdById           String              @db.Uuid
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
 
   org           Org            @relation(fields: [orgId], references: [id], onDelete: Cascade)
   assets        Asset[]
@@ -265,8 +272,10 @@ model Scan {
   params        Json?
   requestedById String     @db.Uuid
   approvedById  String?    @db.Uuid
+  approvedAt    DateTime?
   scheduleId    String?    @db.Uuid
   killedAt      DateTime?
+  killedById    String?    @db.Uuid
   startedAt     DateTime?
   finishedAt    DateTime?
   error         String?
