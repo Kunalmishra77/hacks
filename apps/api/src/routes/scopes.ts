@@ -13,8 +13,9 @@ import {
   type VerificationMethod,
 } from "@aegis/core";
 import type { AppConfig } from "../config.js";
+import type { ScanQueue } from "../queue.js";
 import type { ScopeRecord, Store } from "../store/types.js";
-import { isPublicAddress } from "../verification/netguard.js";
+import { isPublicAddress } from "@aegis/core";
 import { AWS_READ_ONLY_SESSION_POLICY, WELL_KNOWN_PATH, type Verifier } from "../verification/verifiers.js";
 import { requestContext } from "./context.js";
 
@@ -147,9 +148,9 @@ function scopeDto(scope: ScopeRecord, config: AppConfig) {
 
 export async function scopeRoutes(
   app: FastifyInstance,
-  opts: { config: AppConfig; store: Store; limiter: RateLimiter; verifier: Verifier },
+  opts: { config: AppConfig; store: Store; limiter: RateLimiter; verifier: Verifier; queue: ScanQueue },
 ) {
-  const { config, store, limiter, verifier } = opts;
+  const { config, store, limiter, verifier, queue } = opts;
 
   app.post(
     "/orgs/:orgId/scopes",
@@ -287,18 +288,19 @@ export async function scopeRoutes(
       const now = new Date();
       const killed = await store.transaction(async (tx) => {
         await tx.scopes.revoke(scope.id, now);
-        const n = await tx.scans.killActive({ orgId: member.orgId, scopeId: scope.id }, member.userId, now);
+        const list = await tx.scans.killActive({ orgId: member.orgId, scopeId: scope.id }, member.userId, now);
         await createAuditLogger(tx.audit).record({
           action: "scope.revoke",
           actor: { type: "user", id: member.userId },
           orgId: member.orgId,
           scopeId: scope.id,
-          payload: { killedScans: n },
+          payload: { killedScans: list.length },
           ...requestContext(req),
         });
-        return n;
+        return list;
       });
-      return { scopeId: scope.id, status: "REVOKED", killedScans: killed };
+      await Promise.all(killed.map((s) => queue.remove(s.id, s.engine).catch(() => {})));
+      return { scopeId: scope.id, status: "REVOKED", killedScans: killed.length };
     },
   );
 

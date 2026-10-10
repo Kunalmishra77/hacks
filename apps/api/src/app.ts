@@ -10,6 +10,7 @@ import type { AppConfig } from "./config.js";
 import { authPlugin } from "./plugins/auth.js";
 import { authRoutes } from "./routes/auth.js";
 import { orgRoutes } from "./routes/orgs.js";
+import { createMemoryScanQueue, type ScanQueue } from "./queue.js";
 import { scanRoutes } from "./routes/scans.js";
 import { scopeRoutes } from "./routes/scopes.js";
 import { createVerifier, defaultVerificationDeps, type Verifier } from "./verification/verifiers.js";
@@ -23,6 +24,8 @@ export interface BuildAppOptions {
   limiter?: RateLimiter;
   /** Ownership verifier. Tests inject fakes; defaults to real DNS/HTTPS/STS. */
   verifier?: Verifier;
+  /** Scan queue producer. Defaults to an in-memory recorder (nothing runs). */
+  queue?: ScanQueue;
   /** When given, login rate limits are shared across processes too. */
   redis?: Redis;
 }
@@ -40,6 +43,7 @@ export async function buildApp({
   logger = false,
   limiter = createMemoryRateLimiter(),
   verifier = createVerifier(defaultVerificationDeps),
+  queue = createMemoryScanQueue(),
   redis,
 }: BuildAppOptions): Promise<FastifyInstance> {
   const app = Fastify({
@@ -86,8 +90,8 @@ export async function buildApp({
     limits: config.gateLimits,
   });
   app.decorate("scopeGate", gate);
-  await app.register(scopeRoutes, { config, store, limiter, verifier });
-  await app.register(scanRoutes, { store, gate });
+  await app.register(scopeRoutes, { config, store, limiter, verifier, queue });
+  await app.register(scanRoutes, { config, store, gate, queue });
 
   return app;
 }

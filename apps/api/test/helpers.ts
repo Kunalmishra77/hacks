@@ -3,6 +3,7 @@ import { buildApp, type BuildAppOptions } from "../src/app.js";
 import type { AppConfig } from "../src/config.js";
 import { REFRESH_COOKIE } from "../src/routes/auth.js";
 import { createMemoryStore } from "../src/store/memory.js";
+import { createMemoryScanQueue } from "../src/queue.js";
 
 export const testConfig: AppConfig = {
   env: "test",
@@ -23,11 +24,12 @@ export const testConfig: AppConfig = {
 
 export async function makeApp(
   overrides: Partial<AppConfig> = {},
-  deps: Pick<BuildAppOptions, "verifier" | "limiter"> = {},
+  deps: Pick<BuildAppOptions, "verifier" | "limiter" | "queue"> = {},
 ) {
   const store = createMemoryStore();
-  const app = await buildApp({ config: { ...testConfig, ...overrides }, store, ...deps });
-  return { app, store };
+  const queue = createMemoryScanQueue();
+  const app = await buildApp({ config: { ...testConfig, ...overrides }, store, queue, ...deps });
+  return { app, store, queue };
 }
 
 export const PASSWORD = "correct horse battery staple";

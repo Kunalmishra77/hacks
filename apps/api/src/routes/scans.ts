@@ -1,12 +1,20 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
-import { createAuditLogger, ENGINES, can, type ScanAuthorizationDecision, type ScopeGate } from "@aegis/core";
+import {
+  createAuditLogger,
+  ENGINES,
+  can,
+  type AuthorizedTarget,
+  type ScanAuthorizationDecision,
+  type ScopeGate,
+} from "@aegis/core";
+import type { AppConfig } from "../config.js";
+import type { ScanQueue } from "../queue.js";
 import type { ScanRecord, Store } from "../store/types.js";
 import { requestContext } from "./context.js";
 
-// Every scan path goes through `gate.authorize`. No route creates a QUEUED
-// scan any other way. (Phase 2 adds the BullMQ producer right after ALLOW,
-// and workers call the gate again in job_start mode.)
+// Every scan path goes through `gate.authorize`. A job reaches the queue only
+// after an ALLOW, and workers call the gate again in job_start mode.
 
 const CreateScanBody = z.object({
   assetId: z.string().uuid(),
@@ -14,6 +22,10 @@ const CreateScanBody = z.object({
 });
 const ScanParams = z.object({ orgId: z.string().uuid(), scanId: z.string().uuid() });
 const KillSwitchBody = z.object({ engaged: z.boolean() });
+
+const CONCURRENCY_RETRY_MS = 30_000;
+
+class AdmissionThrottled extends Error {}
 
 function scanDto(s: ScanRecord) {
   return {
@@ -42,8 +54,46 @@ function sendDenied(reply: FastifyReply, d: Exclude<ScanAuthorizationDecision, {
   return reply.code(403).send({ error: "scan_rejected", reason: d.reason });
 }
 
-export async function scanRoutes(app: FastifyInstance, opts: { store: Store; gate: ScopeGate }) {
-  const { store, gate } = opts;
+function sendConcurrencyThrottled(reply: FastifyReply) {
+  reply.header("retry-after", Math.ceil(CONCURRENCY_RETRY_MS / 1000));
+  return reply.code(429).send({ error: "throttled", reason: "ORG_CONCURRENCY_LIMIT", retryAfterMs: CONCURRENCY_RETRY_MS });
+}
+
+export async function scanRoutes(
+  app: FastifyInstance,
+  opts: { config: AppConfig; store: Store; gate: ScopeGate; queue: ScanQueue },
+) {
+  const { config, store, gate, queue } = opts;
+
+  /**
+   * The gate's concurrency check runs before the scan exists, so two requests
+   * could both pass it. This re-checks under a per-org lock in the same
+   * transaction that makes the scan active.
+   */
+  async function admit(tx: Store, orgId: string) {
+    await tx.scans.lockOrg(orgId);
+    if ((await tx.gate.countActiveScans(orgId)) >= config.gateLimits.maxConcurrentScansPerOrg) {
+      throw new AdmissionThrottled();
+    }
+  }
+
+  /** Puts an admitted scan on its engine queue; if Redis is down, fails the scan visibly. */
+  async function enqueue(scan: ScanRecord, target: AuthorizedTarget, reply: FastifyReply): Promise<boolean> {
+    try {
+      await queue.enqueue({
+        scanId: scan.id,
+        orgId: scan.orgId,
+        assetId: target.assetId,
+        engine: target.engine,
+        targetAddress: target.address,
+      });
+      return true;
+    } catch (e) {
+      await store.scans.markFailed(scan.id, `queue unavailable: ${(e as Error).message}`.slice(0, 300), new Date());
+      reply.code(503).send({ error: "queue_unavailable", scanId: scan.id });
+      return false;
+    }
+  }
 
   app.post(
     "/orgs/:orgId/scans",
@@ -58,27 +108,36 @@ export async function scanRoutes(app: FastifyInstance, opts: { store: Store; gat
 
       const scopeId = d.decision === "ALLOW" ? d.target.scopeId : d.scopeId;
       const status = d.decision === "ALLOW" ? "QUEUED" : "PENDING_APPROVAL";
-      const scan = await store.transaction(async (tx) => {
-        const created = await tx.scans.create({
-          orgId: member.orgId,
-          scopeId,
-          assetId: body.assetId,
-          engine: body.engine,
-          status,
-          requestedById: member.userId,
+      let scan: ScanRecord;
+      try {
+        scan = await store.transaction(async (tx) => {
+          if (status === "QUEUED") await admit(tx, member.orgId);
+          const created = await tx.scans.create({
+            orgId: member.orgId,
+            scopeId,
+            assetId: body.assetId,
+            engine: body.engine,
+            status,
+            requestedById: member.userId,
+          });
+          await createAuditLogger(tx.audit).record({
+            action: "scan.requested",
+            actor,
+            orgId: member.orgId,
+            scopeId,
+            scanId: created.id,
+            targetId: body.assetId,
+            payload: { engine: body.engine, status },
+            ...requestContext(req),
+          });
+          return created;
         });
-        await createAuditLogger(tx.audit).record({
-          action: "scan.requested",
-          actor,
-          orgId: member.orgId,
-          scopeId,
-          scanId: created.id,
-          targetId: body.assetId,
-          payload: { engine: body.engine, status },
-          ...requestContext(req),
-        });
-        return created;
-      });
+      } catch (e) {
+        if (e instanceof AdmissionThrottled) return sendConcurrencyThrottled(reply);
+        throw e;
+      }
+
+      if (d.decision === "ALLOW" && !(await enqueue(scan, d.target, reply))) return reply;
       return reply.code(status === "QUEUED" ? 201 : 202).send({ scan: scanDto(scan) });
     },
   );
@@ -127,9 +186,21 @@ export async function scanRoutes(app: FastifyInstance, opts: { store: Store; gat
         actor,
       });
       if (d.decision === "ALLOW") {
-        // Conditional on still being pending: a kill in between wins.
-        if (!(await store.scans.resolvePending(scan.id, "QUEUED"))) return reply.code(409).send({ error: "not_pending" });
-        return { scan: scanDto({ ...scan, status: "QUEUED", approvedById: scan.approvedById ?? member.userId }) };
+        let queued: boolean;
+        try {
+          // Conditional on still being pending: a kill in between wins.
+          queued = await store.transaction(async (tx) => {
+            await admit(tx, member.orgId);
+            return tx.scans.resolvePending(scan.id, "QUEUED");
+          });
+        } catch (e) {
+          if (e instanceof AdmissionThrottled) return sendConcurrencyThrottled(reply);
+          throw e;
+        }
+        if (!queued) return reply.code(409).send({ error: "not_pending" });
+        const approved = { ...scan, status: "QUEUED" as const, approvedById: scan.approvedById ?? member.userId };
+        if (!(await enqueue(approved, d.target, reply))) return reply;
+        return { scan: scanDto(approved) };
       }
       if (d.decision === "REJECT") await store.scans.resolvePending(scan.id, "REJECTED");
       // THROTTLED leaves it approved and pending; calling approve again retries.
@@ -160,12 +231,15 @@ export async function scanRoutes(app: FastifyInstance, opts: { store: Store; gat
         return true;
       });
       if (!killed) return reply.code(409).send({ error: "not_active", status: scan.status });
+      // Best effort: a queued job is dropped now; if it slips through, the
+      // worker's job_start gate check refuses it because the scan is KILLED.
+      await queue.remove(scan.id, scan.engine).catch(() => {});
       return { scanId: scan.id, status: "KILLED" };
     },
   );
 
   // Org-level kill-switch: one API call. Engaging stops every active scan and
-  // blocks new ones at the gate; workers refuse killed jobs at start.
+  // blocks new ones at the gate; running workers stop at their next heartbeat.
   app.post(
     "/orgs/:orgId/kill-switch",
     { preHandler: [app.authenticate, app.requirePermission("killswitch.engage")] },
@@ -176,19 +250,20 @@ export async function scanRoutes(app: FastifyInstance, opts: { store: Store; gat
         return reply.code(403).send({ error: "forbidden", message: "only Admins can release the kill-switch" });
       }
       const now = new Date();
-      const killedScans = await store.transaction(async (tx) => {
+      const killed = await store.transaction(async (tx) => {
         await tx.orgs.setKillSwitch(member.orgId, engaged, member.userId, now);
-        const n = engaged ? await tx.scans.killActive({ orgId: member.orgId }, member.userId, now) : 0;
+        const list = engaged ? await tx.scans.killActive({ orgId: member.orgId }, member.userId, now) : [];
         await createAuditLogger(tx.audit).record({
           action: engaged ? "killswitch.engaged" : "killswitch.released",
           actor: { type: "user", id: member.userId },
           orgId: member.orgId,
-          payload: engaged ? { killedScans: n } : null,
+          payload: engaged ? { killedScans: list.length } : null,
           ...requestContext(req),
         });
-        return n;
+        return list;
       });
-      return { killSwitchEngaged: engaged, killedScans };
+      await Promise.all(killed.map((s) => queue.remove(s.id, s.engine).catch(() => {})));
+      return { killSwitchEngaged: engaged, killedScans: killed.length };
     },
   );
 }

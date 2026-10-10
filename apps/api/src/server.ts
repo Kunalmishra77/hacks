@@ -4,6 +4,7 @@ import { buildApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { checkEvictionPolicy, connectRedis, createRedisRateLimiter } from "./redis.js";
 import { createPrismaStore } from "./store/prisma.js";
+import { createBullScanQueue } from "./queue.js";
 
 const config = loadConfig();
 
@@ -16,6 +17,7 @@ const app = await buildApp({
   logger: true,
   redis,
   limiter: redis ? createRedisRateLimiter(redis) : createMemoryRateLimiter(),
+  queue: redis ? createBullScanQueue(redis) : undefined,
 });
 
 if (redis) {
@@ -23,7 +25,7 @@ if (redis) {
   if (policy === "unknown") app.log.warn("could not read Redis maxmemory-policy; make sure it is noeviction");
   else if (policy !== "ok") app.log.warn({ policy }, "Redis maxmemory-policy should be noeviction (queued jobs may be evicted)");
 } else {
-  app.log.warn("REDIS_URL not set: using in-process rate limits (single process only, dev only)");
+  app.log.warn("REDIS_URL not set: in-process rate limits and NO scan queue (scans are recorded but never run)");
 }
 
 const shutdown = async (signal: string) => {

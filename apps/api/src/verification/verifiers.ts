@@ -3,7 +3,7 @@ import https from "node:https";
 import { isIP } from "node:net";
 import { AssumeRoleCommand, GetCallerIdentityCommand, STSClient } from "@aws-sdk/client-sts";
 import type { VerificationMethod } from "@aegis/core";
-import { guardedLookup, isPublicAddress } from "./netguard.js";
+import { guardedLookup, isPublicAddress } from "@aegis/core";
 
 // Ownership verification (docs/SCOPE_AUTHORIZATION.md, "Ownership
 // verification methods"). Each verifier only proves control; none of them

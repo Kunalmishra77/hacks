@@ -1,4 +1,4 @@
-import { Prisma, type PrismaClient } from "@aegis/db";
+import { createPrismaGateRepository, Prisma, type PrismaClient } from "@aegis/db";
 import type { AuditEvent } from "@aegis/core";
 import { ACTIVE_SCAN_STATUSES, UniqueViolationError, type Store } from "./types.js";
 
@@ -162,57 +162,24 @@ function build(db: Db, root: PrismaClient): Store {
         return r.count === 1;
       },
       async killActive({ orgId, scopeId }, byId, at) {
-        const r = await db.scan.updateMany({
-          where: { orgId, ...(scopeId ? { scopeId } : {}), status: { in: [...ACTIVE_SCAN_STATUSES] } },
+        const where = { orgId, ...(scopeId ? { scopeId } : {}), status: { in: [...ACTIVE_SCAN_STATUSES] } };
+        const victims = await db.scan.findMany({ where, select: { id: true, engine: true } });
+        if (victims.length === 0) return [];
+        await db.scan.updateMany({
+          where: { ...where, id: { in: victims.map((v) => v.id) } },
           data: { status: "KILLED", killedAt: at, killedById: byId },
         });
-        return r.count;
+        return victims;
+      },
+      async markFailed(id, error, at) {
+        await db.scan.updateMany({ where: { id, status: "QUEUED" }, data: { status: "FAILED", error, finishedAt: at } });
+      },
+      async lockOrg(orgId) {
+        // Transaction-scoped advisory lock; released on commit/rollback.
+        await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${orgId}))`;
       },
     },
-    gate: {
-      async findAssetWithScope(assetId) {
-        const a = await db.asset.findUnique({
-          where: { id: assetId },
-          select: {
-            id: true,
-            scopeId: true,
-            kind: true,
-            address: true,
-            scope: {
-              select: {
-                id: true,
-                orgId: true,
-                type: true,
-                value: true,
-                status: true,
-                expiresAt: true,
-                allowedEngines: true,
-                maxRequestsPerSec: true,
-              },
-            },
-          },
-        });
-        if (!a) return null;
-        const { scope, ...asset } = a;
-        return { asset, scope };
-      },
-      findOrg: (orgId) => db.org.findUnique({ where: { id: orgId }, select: { id: true, killSwitchEngaged: true } }),
-      findScan: (scanId) =>
-        db.scan.findUnique({
-          where: { id: scanId },
-          select: {
-            id: true,
-            orgId: true,
-            scopeId: true,
-            assetId: true,
-            engine: true,
-            status: true,
-            approvedById: true,
-            killedAt: true,
-          },
-        }),
-      countActiveScans: (orgId) => db.scan.count({ where: { orgId, status: { in: ["QUEUED", "RUNNING"] } } }),
-    },
+    gate: createPrismaGateRepository(db),
     memberships: {
       find: (orgId, userId) => db.membership.findUnique({ where: { orgId_userId: { orgId, userId } } }),
       create: (input) => db.membership.create({ data: input }).catch(rethrowUnique),

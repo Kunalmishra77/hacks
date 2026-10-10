@@ -5,7 +5,8 @@
   "description": "Aegis ASM — authorized, defensive attack-surface management",
   "workspaces": [
     "packages/*",
-    "apps/*"
+    "apps/*",
+    "workers/*"
   ],
   "engines": {
     "node": ">=20.11"
@@ -17,7 +18,8 @@
     "db:migrate": "npm run migrate:dev -w @aegis/db",
     "db:deploy": "npm run migrate:deploy -w @aegis/db",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present"
+    "test": "npm run test --workspaces --if-present",
+    "dev:worker:discovery": "npm run dev -w @aegis/worker-discovery"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

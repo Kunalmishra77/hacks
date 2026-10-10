@@ -84,6 +84,8 @@ export interface AssetRecord {
   address: string;
   firstSeen: Date;
   lastSeen: Date;
+  metadata: unknown;
+  discoveredByScanId: string | null;
 }
 
 export interface ScanRecord {
@@ -157,10 +159,17 @@ export interface Store {
     approve(id: string, approvedById: string, at: Date): Promise<boolean>;
     /** Moves PENDING_APPROVAL → QUEUED or REJECTED. Returns false if no longer pending. */
     resolvePending(id: string, status: "QUEUED" | "REJECTED"): Promise<boolean>;
+    /** QUEUED → FAILED (e.g. the queue was unreachable). */
+    markFailed(id: string, error: string, at: Date): Promise<void>;
     /** Kills one scan if active. Returns false if it was not active. */
     kill(id: string, byId: string, at: Date): Promise<boolean>;
-    /** Kills all active scans for an org (or one scope). Returns how many. */
-    killActive(filter: { orgId: string; scopeId?: string }, byId: string, at: Date): Promise<number>;
+    /** Kills all active scans for an org (or one scope). Returns the scans it killed. */
+    killActive(filter: { orgId: string; scopeId?: string }, byId: string, at: Date): Promise<{ id: string; engine: Engine }[]>;
+    /**
+     * Serializes scan admission per org until the transaction ends, so the
+     * concurrency cap can be checked and the scan created atomically.
+     */
+    lockOrg(orgId: string): Promise<void>;
   };
   /** Read-only view the Scope Authorization Gate uses. */
   gate: GateRepository;

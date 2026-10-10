@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { describe, expect, it } from "vitest";
-import { BlockedAddressError, guardedLookup, isPublicAddress } from "../src/verification/netguard.js";
+import { BlockedAddressError, guardedLookup, isPublicAddress } from "@aegis/core";
 import { createVerifier, fetchWellKnown, type VerificationDeps } from "../src/verification/verifiers.js";
 
 const TOKEN = "aegis-verify=abc123";

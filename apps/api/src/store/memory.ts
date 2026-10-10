@@ -213,7 +213,7 @@ export function createMemoryStore(): Store & { readonly auditEvents: readonly Au
         let a = s.assets.find((x) => x.scopeId === scopeId && x.kind === kind && x.address === address);
         if (a) a.lastSeen = at;
         else {
-          a = { id: randomUUID(), scopeId, kind, address, firstSeen: at, lastSeen: at };
+          a = { id: randomUUID(), scopeId, kind, address, firstSeen: at, lastSeen: at, metadata: null, discoveredByScanId: null };
           s.assets.push(a);
         }
         return copy(a);
@@ -262,15 +262,20 @@ export function createMemoryStore(): Store & { readonly auditEvents: readonly Au
         Object.assign(sc, { status: "KILLED", killedAt: at, killedById: byId });
         return true;
       },
+      async lockOrg() {},
+      async markFailed(id) {
+        const sc = s.scans.find((x) => x.id === id);
+        if (sc && sc.status === "QUEUED") sc.status = "FAILED";
+      },
       async killActive({ orgId, scopeId }, byId, at) {
-        let n = 0;
+        const killed: { id: string; engine: ScanRecord["engine"] }[] = [];
         for (const sc of s.scans) {
           if (sc.orgId === orgId && (!scopeId || sc.scopeId === scopeId) && isActive(sc)) {
             Object.assign(sc, { status: "KILLED", killedAt: at, killedById: byId });
-            n++;
+            killed.push({ id: sc.id, engine: sc.engine });
           }
         }
-        return n;
+        return killed;
       },
     },
     gate: {
