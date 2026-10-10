@@ -1,0 +1,364 @@
+// Aegis ASM — database schema.
+// See docs/ARCHITECTURE.md §3 and docs/SCOPE_AUTHORIZATION.md (data model).
+//
+// AuditEvent is append-only: the initial migration installs a trigger that
+// rejects UPDATE and DELETE on "AuditEvent". Do not remove it.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  // Supabase: DATABASE_URL = transaction pooler (port 6543, ?pgbouncer=true)
+  // for the app; DIRECT_URL = direct connection (port 5432) for migrations.
+  // Locally both point at the docker-compose Postgres.
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ───────────────────────── Enums ─────────────────────────
+
+enum Role {
+  OWNER
+  ADMIN
+  ANALYST
+  VIEWER
+}
+
+enum ScopeType {
+  DOMAIN
+  IP_RANGE
+  CLOUD_ACCOUNT
+}
+
+enum ScopeStatus {
+  PENDING
+  VERIFIED
+  EXPIRED
+  REVOKED
+}
+
+enum VerificationMethod {
+  DNS_TXT
+  HTTP_FILE
+  CLOUD_ROLE
+}
+
+enum AssetKind {
+  DOMAIN
+  SUBDOMAIN
+  IP
+  SERVICE
+  CLOUD_RESOURCE
+}
+
+enum Engine {
+  DISCOVERY
+  NETWORK
+  TLS
+  WEB
+  CLOUD
+  DEPS
+}
+
+enum ScanStatus {
+  PENDING_APPROVAL
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  KILLED
+  REJECTED
+}
+
+enum Severity {
+  INFO
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum FindingStatus {
+  OPEN
+  TRIAGED
+  FIXED
+  FALSE_POSITIVE
+}
+
+enum ReportFormat {
+  PDF
+  HTML
+}
+
+// ───────────────────────── Tenancy & identity ─────────────────────────
+
+model Org {
+  id                String    @id @default(uuid()) @db.Uuid
+  name              String
+  slug              String    @unique
+  // Org-level kill-switch (SCOPE_AUTHORIZATION.md §Controls).
+  killSwitchEngaged Boolean   @default(false)
+  killSwitchAt      DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  memberships   Membership[]
+  teams         Team[]
+  invites       Invite[]
+  scopes        Scope[]
+  scans         Scan[]
+  reports       Report[]
+  apiKeys       ApiKey[]
+  scanSchedules ScanSchedule[]
+}
+
+model User {
+  id           String    @id @default(uuid()) @db.Uuid
+  email        String    @unique // stored lower-cased
+  name         String?
+  passwordHash String // argon2id
+  disabledAt   DateTime?
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  memberships   Membership[]
+  refreshTokens RefreshToken[]
+}
+
+model Team {
+  id        String   @id @default(uuid()) @db.Uuid
+  orgId     String   @db.Uuid
+  name      String
+  createdAt DateTime @default(now())
+
+  org         Org          @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  memberships Membership[]
+
+  @@unique([orgId, name])
+}
+
+model Membership {
+  id        String   @id @default(uuid()) @db.Uuid
+  orgId     String   @db.Uuid
+  userId    String   @db.Uuid
+  teamId    String?  @db.Uuid
+  role      Role
+  createdAt DateTime @default(now())
+
+  org  Org   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team Team? @relation(fields: [teamId], references: [id], onDelete: SetNull)
+
+  @@unique([orgId, userId])
+  @@index([userId])
+}
+
+model Invite {
+  id          String    @id @default(uuid()) @db.Uuid
+  orgId       String    @db.Uuid
+  email       String
+  role        Role
+  tokenHash   String    @unique // sha256 of the one-time token
+  invitedById String    @db.Uuid
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  org Org @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, email])
+}
+
+model RefreshToken {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @db.Uuid
+  tokenHash  String    @unique // sha256 of the opaque token
+  familyId   String    @db.Uuid // rotation family; reuse revokes the family
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  replacedBy String?   @db.Uuid
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+}
+
+model ApiKey {
+  id         String    @id @default(uuid()) @db.Uuid
+  orgId      String    @db.Uuid
+  name       String
+  prefix     String    @unique // first chars shown in UI to identify the key
+  keyHash    String // sha256 of the full key; plaintext is never stored
+  role       Role
+  createdBy  String    @db.Uuid
+  lastUsedAt DateTime?
+  expiresAt  DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  org Org @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+}
+
+// ───────────────────────── Scope & assets ─────────────────────────
+// Phase 0 only defines the tables. The Scope Authorization Gate that reads
+// them is implemented in Phase 1 (docs/SCOPE_AUTHORIZATION.md).
+
+model Scope {
+  id                 String              @id @default(uuid()) @db.Uuid
+  orgId              String              @db.Uuid
+  type               ScopeType
+  value              String // apex domain, CIDR, or cloud account id
+  status             ScopeStatus         @default(PENDING)
+  verificationMethod VerificationMethod?
+  verificationToken  String? // the token the customer must publish
+  verifiedAt         DateTime?
+  expiresAt          DateTime?
+  revokedAt          DateTime?
+  allowedEngines     Engine[]
+  // Per-scope rate limit (requests/sec against targets in this scope).
+  maxRequestsPerSec  Int                 @default(5)
+  createdById        String              @db.Uuid
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  org           Org            @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  assets        Asset[]
+  scans         Scan[]
+  reports       Report[]
+  scanSchedules ScanSchedule[]
+
+  @@unique([orgId, type, value])
+  @@index([orgId, status])
+}
+
+model Asset {
+  id        String    @id @default(uuid()) @db.Uuid
+  scopeId   String    @db.Uuid
+  kind      AssetKind
+  address   String // hostname, IP, ip:port, or cloud ARN/resource id
+  firstSeen DateTime  @default(now())
+  lastSeen  DateTime  @default(now())
+
+  scope    Scope     @relation(fields: [scopeId], references: [id], onDelete: Cascade)
+  scans    Scan[]
+  findings Finding[]
+
+  @@unique([scopeId, kind, address])
+}
+
+// ───────────────────────── Scans & findings ─────────────────────────
+
+model Scan {
+  id            String     @id @default(uuid()) @db.Uuid
+  orgId         String     @db.Uuid
+  scopeId       String     @db.Uuid
+  assetId       String?    @db.Uuid
+  engine        Engine
+  status        ScanStatus @default(QUEUED)
+  params        Json?
+  requestedById String     @db.Uuid
+  approvedById  String?    @db.Uuid
+  scheduleId    String?    @db.Uuid
+  killedAt      DateTime?
+  startedAt     DateTime?
+  finishedAt    DateTime?
+  error         String?
+  createdAt     DateTime   @default(now())
+
+  org      Org           @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  scope    Scope         @relation(fields: [scopeId], references: [id], onDelete: Restrict)
+  asset    Asset?        @relation(fields: [assetId], references: [id], onDelete: SetNull)
+  schedule ScanSchedule? @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
+  findings Finding[]
+
+  @@index([orgId, status])
+  @@index([scopeId])
+}
+
+model Finding {
+  id          String        @id @default(uuid()) @db.Uuid
+  scanId      String        @db.Uuid
+  assetId     String        @db.Uuid
+  type        String
+  severity    Severity
+  cvss        Float?
+  cveRefs     String[]
+  title       String
+  evidenceUrl String?
+  remediation String?
+  status      FindingStatus @default(OPEN)
+  // Stable hash of (asset, type, key evidence) used for dedupe in Phase 5.
+  fingerprint String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  scan  Scan  @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@index([assetId, status])
+  @@index([fingerprint])
+}
+
+model Report {
+  id          String       @id @default(uuid()) @db.Uuid
+  orgId       String       @db.Uuid
+  scopeId     String?      @db.Uuid
+  format      ReportFormat
+  storageUrl  String
+  createdById String       @db.Uuid
+  createdAt   DateTime     @default(now())
+
+  org   Org    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  scope Scope? @relation(fields: [scopeId], references: [id], onDelete: SetNull)
+
+  @@index([orgId])
+}
+
+model ScanSchedule {
+  id          String    @id @default(uuid()) @db.Uuid
+  orgId       String    @db.Uuid
+  scopeId     String    @db.Uuid
+  cron        String
+  engines     Engine[]
+  enabled     Boolean   @default(true)
+  createdById String    @db.Uuid
+  lastRunAt   DateTime?
+  nextRunAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  org   Org    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  scope Scope  @relation(fields: [scopeId], references: [id], onDelete: Cascade)
+  scans Scan[]
+
+  @@index([orgId])
+}
+
+// ───────────────────────── Audit ─────────────────────────
+// Append-only. No foreign-key cascade deletes reach this table: orgId and
+// actorId are plain columns so audit evidence outlives the rows it describes.
+
+model AuditEvent {
+  id        String   @id @default(uuid()) @db.Uuid
+  orgId     String?  @db.Uuid // null for pre-tenant events (e.g. failed login)
+  actorId   String?  @db.Uuid // null for anonymous/system actors
+  actorType String // 'user' | 'api_key' | 'system' | 'anonymous'
+  action    String // e.g. 'auth.login', 'org.create', 'member.invite'
+  scopeId   String?  @db.Uuid
+  scanId    String?  @db.Uuid
+  targetId  String? // id of the primary object acted on, if any
+  ip        String?
+  userAgent String?
+  payload   Json?
+  createdAt DateTime @default(now())
+
+  @@index([orgId, createdAt])
+  @@index([action])
+}
