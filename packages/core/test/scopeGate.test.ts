@@ -246,6 +246,8 @@ describe("scope gate: other invariants", () => {
       target: {
         orgId: "org-a",
         scopeId: "s1",
+        scopeType: "DOMAIN",
+        scopeValue: "example.com",
         assetId: "a1",
         kind: "SUBDOMAIN",
         address: "api.example.com",
@@ -362,6 +364,41 @@ describe("scope gate: other invariants", () => {
       actor: { type: "system" as const },
     };
     for (let i = 0; i < 5; i++) expect(await f.gate.authorize(job)).toMatchObject({ decision: "ALLOW" });
+  });
+
+  it("heartbeat re-checks a running job, auditing only when it must stop", async () => {
+    f.addScope({ id: "s1", orgId: "org-a" });
+    f.addAsset({ id: "a1", scopeId: "s1" });
+    f.addScan({ id: "scan-1", orgId: "org-a", assetId: "a1", scopeId: "s1", status: "RUNNING" });
+    const beat = {
+      mode: "heartbeat" as const,
+      orgId: "org-a",
+      scanId: "scan-1",
+      assetId: "a1",
+      engine: "TLS" as const,
+      targetAddress: "example.com",
+      actor: { type: "system" as const },
+    };
+
+    for (let i = 0; i < 3; i++) expect(await f.gate.authorize(beat)).toMatchObject({ decision: "ALLOW" });
+    expect(f.sink.events).toHaveLength(0); // no audit spam while healthy
+
+    f.orgs.set("org-a", { id: "org-a", killSwitchEngaged: true });
+    expect(await f.gate.authorize(beat)).toEqual({ decision: "REJECT", reason: "KILL_SWITCH_ENGAGED" });
+    expect(f.sink.events).toHaveLength(1);
+    expect(f.sink.events[0]).toMatchObject({ action: "scan.rejected", payload: { mode: "heartbeat" } });
+
+    // A heartbeat for a job that is only QUEUED (never started) is not runnable.
+    f.orgs.set("org-a", { id: "org-a", killSwitchEngaged: false });
+    f.addScan({ id: "scan-2", orgId: "org-a", assetId: "a1", scopeId: "s1", status: "QUEUED" });
+    expect(await f.gate.authorize({ ...beat, scanId: "scan-2" })).toEqual({ decision: "REJECT", reason: "SCAN_NOT_RUNNABLE" });
+  });
+
+  it("includes the scope type and value in the authorized target", async () => {
+    f.addScope({ id: "s1", orgId: "org-a", value: "example.com" });
+    f.addAsset({ id: "a1", scopeId: "s1" });
+    const d = await f.gate.authorize({ mode: "enqueue", orgId: "org-a", assetId: "a1", engine: "DISCOVERY", actor });
+    expect(d).toMatchObject({ decision: "ALLOW", target: { scopeType: "DOMAIN", scopeValue: "example.com" } });
   });
 
   it("refuses jobs whose scan is not queued or running", async () => {

@@ -94,7 +94,16 @@ export interface JobStartRequest extends BaseRequest {
   targetAddress: string;
 }
 
-export type ScanAuthorizationRequest = EnqueueRequest | JobStartRequest;
+/**
+ * Worker path while a job runs: same checks as job_start, but only decisions
+ * that stop the job are audited (a healthy heartbeat every few seconds would
+ * otherwise flood the log).
+ */
+export interface HeartbeatRequest extends Omit<JobStartRequest, "mode"> {
+  mode: "heartbeat";
+}
+
+export type ScanAuthorizationRequest = EnqueueRequest | JobStartRequest | HeartbeatRequest;
 
 export type ScanRejectReason =
   | "NO_SCOPE"
@@ -116,6 +125,8 @@ export type ThrottleReason = "SCOPE_RATE_LIMIT" | "ORG_CONCURRENCY_LIMIT";
 export interface AuthorizedTarget {
   orgId: string;
   scopeId: string;
+  scopeType: ScopeType;
+  scopeValue: string;
   assetId: string;
   kind: AssetKind;
   address: string;
@@ -154,12 +165,13 @@ export function createScopeGate(deps: {
     });
 
     const found = await repo.findAssetWithScope(req.assetId);
-    if (!found) return reject(req.mode === "job_start" ? "TAMPERED_JOB" : "NO_SCOPE");
+    const isWorker = req.mode !== "enqueue";
+    if (!found) return reject(isWorker ? "TAMPERED_JOB" : "NO_SCOPE");
     const { asset, scope } = found;
 
     // Tenant isolation: the asset's scope must belong to the requesting org.
     // The scope id is not recorded on the rejection so the other org's ids don't leak.
-    if (scope.orgId !== req.orgId) return reject(req.mode === "job_start" ? "TAMPERED_JOB" : "TENANT_MISMATCH");
+    if (scope.orgId !== req.orgId) return reject(isWorker ? "TAMPERED_JOB" : "TENANT_MISMATCH");
 
     // In job_start mode the scan record is the source of truth; the payload must match it.
     let scan: GateScan | null = null;
@@ -175,7 +187,7 @@ export function createScopeGate(deps: {
         return reject("TAMPERED_JOB", scope.id);
       }
     }
-    if (req.mode === "job_start" && req.targetAddress !== asset.address) return reject("TAMPERED_JOB", scope.id);
+    if (isWorker && req.targetAddress !== asset.address) return reject("TAMPERED_JOB", scope.id);
 
     if (scope.status === "REVOKED") return reject("SCOPE_REVOKED", scope.id);
     if (scope.status === "EXPIRED") return reject("SCOPE_EXPIRED", scope.id);
@@ -192,7 +204,10 @@ export function createScopeGate(deps: {
 
     const needsApproval = ENGINES_REQUIRING_APPROVAL.has(req.engine) && !scan?.approvedById;
 
-    if (req.mode === "job_start") {
+    if (req.mode === "heartbeat") {
+      if (scan!.status !== "RUNNING") return reject("SCAN_NOT_RUNNABLE", scope.id);
+      if (needsApproval) return reject("NOT_APPROVED", scope.id);
+    } else if (req.mode === "job_start") {
       if (scan!.status !== "QUEUED" && scan!.status !== "RUNNING") return reject("SCAN_NOT_RUNNABLE", scope.id);
       if (needsApproval) return reject("NOT_APPROVED", scope.id);
     } else {
@@ -220,6 +235,8 @@ export function createScopeGate(deps: {
         target: {
           orgId: req.orgId,
           scopeId: scope.id,
+          scopeType: scope.type,
+          scopeValue: scope.value,
           assetId: asset.id,
           kind: asset.kind,
           address: asset.address,
@@ -234,6 +251,7 @@ export function createScopeGate(deps: {
   return {
     async authorize(req) {
       const { d, scopeId } = await decide(req);
+      if (req.mode === "heartbeat" && d.decision === "ALLOW") return d;
       const action =
         d.decision === "ALLOW"
           ? "scan.authorized"
@@ -256,7 +274,7 @@ export function createScopeGate(deps: {
           engine: req.engine,
           assetId: req.assetId,
           ...(d.decision === "REJECT" || d.decision === "THROTTLED" ? { reason: d.reason } : {}),
-          ...(req.mode === "job_start" ? { targetAddress: req.targetAddress } : {}),
+          ...(req.mode !== "enqueue" ? { targetAddress: req.targetAddress } : {}),
         },
       });
       return d;
