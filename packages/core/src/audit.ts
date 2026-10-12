@@ -32,6 +32,8 @@ export type AuditAction =
   | "scan.throttled"
   | "scan.rejected"
   | "finding.triaged"
+  | "report.create"
+  | "report.shared"
   | "scan.killed"
   | "killswitch.engaged"
   | "killswitch.released";

@@ -6,10 +6,11 @@ authorized to test**, and tells it how to fix them. It never exploits, brute-for
 or runs destructive actions. See [CLAUDE.md](CLAUDE.md) for the non-negotiable rules
 and [docs/](docs/) for the PRD, architecture, and scope-authorization design.
 
-> **Status: Phase 3.5 (CVE intel enrichment) done.** Everything from Phase 0–3,
-> plus findings enriched with **CVSS** (NVD), **EPSS** exploit probability and the
-> **CISA KEV** known-exploited flag, combined into a single risk score
-> (CVSS × EPSS × asset importance, KEV-escalated). Scheduling/monitoring is Phase 6.
+> **Status: Phase 5 (Reports) done.** Everything from Phase 0–3.5, plus
+> **shareable reports**: a point-in-time, risk-ranked snapshot of open findings
+> with remediation, rendered as a self-contained HTML document (print to PDF),
+> downloadable in-app or via a signed, expiring link. Cloud posture (Phase 4) and
+> scheduling/monitoring (Phase 6) are next.
 
 ## Repository layout
 
@@ -22,6 +23,7 @@ packages/
   db/         Prisma schema, migrations, client, gate repository
   worker-kit/ Job lifecycle every worker shares: gate re-check, heartbeat, safe tool runner
   cve/        CVE intel: NVD (CVSS), EPSS, CISA KEV, and the risk-score formula
+  report/     Report model + self-contained HTML renderer
 workers/
   discovery/  crt.sh + subfinder (passive) → DNS → httpx liveness
   tls/        testssl.sh wrapper: protocol, cipher and certificate hygiene
@@ -113,6 +115,12 @@ Then sign in at http://localhost:3000/login.
 | POST | `/orgs/:orgId/scans/:scanId/approve` | Admin+ |
 | POST | `/orgs/:orgId/scans/:scanId/kill` | Analyst+ |
 | POST | `/orgs/:orgId/kill-switch` | `{engaged:true}` Analyst+, `{engaged:false}` Admin+ |
+| GET | `/orgs/:orgId/findings`, `/orgs/:orgId/findings/:id` | Viewer+; risk-ranked, filterable |
+| POST | `/orgs/:orgId/findings/:id/status` | Analyst+; triage |
+| GET/POST | `/orgs/:orgId/reports` | list (Viewer+) / generate (Analyst+) |
+| GET | `/orgs/:orgId/reports/:id/download` | Viewer+; in-app HTML |
+| POST | `/orgs/:orgId/reports/:id/share` | Analyst+; returns a signed link |
+| GET | `/reports/download?token=…` | public, signed, expiring |
 
 Non-members of an org get `404` (not `403`) so org ids can't be probed.
 Invite tokens are returned in the API response until email delivery lands in Phase 6.
@@ -181,6 +189,33 @@ the key — a scan worker finishes, enqueues `{scanId}`, and the enrichment work
 and the KEV catalog on a TTL. The whole pass is advisory and fails soft: if a
 source is down, the finding is still scored from what's known, and the scan is
 never affected. Set `CVE_ENRICHMENT=off` to disable it.
+
+## Reports (Phase 5)
+
+From the Reports tab, generate a point-in-time report for the whole
+organization or a single boundary. A report is a **snapshot**: it captures the
+open (and triaged) findings at that moment, risk-ranked, each with its CVE/CVSS/
+EPSS/KEV context and remediation, plus a severity summary and an asset count.
+
+The report is a **self-contained HTML document** — inline styles, no scripts, no
+external resources — so it opens anywhere and prints straight to PDF from the
+browser. Rendering escapes all content and redacts secret-ish evidence keys, so
+nothing sensitive leaks into a document meant to be shared.
+
+Two ways to hand it over:
+
+- **In-app**: the dashboard fetches it with your session and opens it in a tab.
+- **Shareable link**: mint a signed, expiring URL (`/reports/download?token=…`,
+  72 h by default) that opens without a login — for a client or a colleague
+  without an account. The token is a stateless HMAC over the report id and
+  expiry (ARCHITECTURE §5 "signed, short-lived URLs"); nothing but expiry can be
+  inferred from it, and the report body is served with `Content-Security-Policy:
+  default-src 'none'` and `Cache-Control: no-store`.
+
+Report bodies are stored in Postgres so a shared link keeps showing the snapshot
+even as findings change. (Wire object storage — Supabase Storage or any
+S3-compatible endpoint — in a later pass if you'd rather keep large bodies out
+of the database.) Every generation and share is audited.
 
 ## Scope Authorization Gate
 
