@@ -437,6 +437,21 @@ export function ScopesView({ org, scopes, act }: { org: OrgSummary; scopes: Scop
                     {open === s.id ? "Hide steps" : "How to prove it"}
                   </button>
                 )}
+                {manage && s.status !== "REVOKED" && (
+                  <label className="ml-auto flex items-center gap-1.5 text-sm text-muted">
+                    Importance
+                    <select
+                      value={s.criticality}
+                      onChange={(e) => act(() => api(`/orgs/${org.id}/scopes/${s.id}/criticality`, { method: "POST", body: { criticality: e.target.value } }), `Set ${s.value} importance to ${e.target.value.toLowerCase()}.`)}
+                      className="rounded border border-line bg-sheet px-1.5 py-0.5"
+                      title="Scales the risk score of findings on this boundary"
+                    >
+                      <option value="LOW">Low</option>
+                      <option value="MEDIUM">Normal</option>
+                      <option value="HIGH">High</option>
+                    </select>
+                  </label>
+                )}
               </div>
               {s.lastVerificationError && s.status !== "VERIFIED" && (
                 <p className="mt-2 text-sm text-stop">Last check: {s.lastVerificationError}</p>
@@ -587,7 +602,8 @@ export function FindingsView({
   const [hideResolved, setHideResolved] = useState(true);
   const shown = findings
     .filter((f) => !hideResolved || (f.status !== "FIXED" && f.status !== "FALSE_POSITIVE"))
-    .sort((a, b) => SEVERITY_META[b.severity].order - SEVERITY_META[a.severity].order);
+    // Highest risk score first; findings without a score fall back to severity.
+    .sort((a, b) => (b.riskScore ?? -1) - (a.riskScore ?? -1) || SEVERITY_META[b.severity].order - SEVERITY_META[a.severity].order);
   const total = SEVERITY_ORDER.reduce((n, s) => n + summary[s], 0);
 
   if (findings.length === 0) {
@@ -634,9 +650,21 @@ export function FindingsView({
                 aria-expanded={expanded}
                 className="flex w-full items-baseline gap-3 py-3 text-left"
               >
-                <span className={`w-16 shrink-0 rounded px-1.5 py-0.5 text-center text-xs font-semibold ${meta.chip}`}>{meta.label}</span>
+                <span className="flex w-16 shrink-0 flex-col items-center gap-0.5">
+                  <span className={`w-full rounded px-1.5 py-0.5 text-center text-xs font-semibold ${meta.chip}`}>{meta.label}</span>
+                  {f.riskScore !== null && (
+                    <span className="text-[11px] text-muted" title="Combined risk: CVSS × EPSS × asset importance">
+                      risk {f.riskScore}
+                    </span>
+                  )}
+                </span>
                 <span className="flex-1">
                   <span className="font-medium">{f.title}</span>
+                  {f.kevListed && (
+                    <span className="ml-2 rounded bg-stop px-1.5 py-0.5 text-[11px] font-semibold text-sheet" title="On CISA's Known Exploited Vulnerabilities list — actively exploited in the wild">
+                      Exploited
+                    </span>
+                  )}
                   <span className="ml-2 font-mono text-[13px] text-muted [overflow-wrap:anywhere]">{f.assetAddress}</span>
                 </span>
                 {f.status !== "OPEN" && <span className="shrink-0 text-xs text-muted">{FINDING_STATUS[f.status]}</span>}
@@ -644,10 +672,12 @@ export function FindingsView({
               {expanded && (
                 <div className="pb-4 pl-[4.75rem] text-sm">
                   {f.remediation && <p className="max-w-2xl">{f.remediation}</p>}
-                  {f.cveRefs.length > 0 && (
+                  {(f.cveRefs.length > 0 || f.epss !== null) && (
                     <p className="mt-2 text-muted">
                       {f.cveRefs.join(", ")}
                       {f.cvss !== null && ` · CVSS ${f.cvss}`}
+                      {f.epss !== null && ` · ${Math.round(f.epss * 100)}% chance of exploitation in the next 30 days (EPSS)`}
+                      {f.kevListed && ` · on CISA's Known Exploited list`}
                     </p>
                   )}
                   <EvidenceList evidence={f.evidence} />

@@ -81,6 +81,7 @@ export interface Scope {
   verifiedAt: string | null;
   expiresAt: string | null;
   allowedEngines: Engine[];
+  criticality: "LOW" | "MEDIUM" | "HIGH";
   lastVerificationError: string | null;
   verification: {
     DNS_TXT?: { recordType: string; name: string; value: string };
@@ -126,6 +127,10 @@ export interface Finding {
   evidence: Record<string, unknown> | null;
   remediation: string | null;
   status: FindingStatus;
+  epss: number | null;
+  kevListed: boolean;
+  riskScore: number | null;
+  enrichedAt: string | null;
   firstSeenAt: string;
   lastSeenAt: string;
 }
