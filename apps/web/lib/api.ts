@@ -2,6 +2,7 @@
 // the refresh token is an httpOnly cookie the browser sends to /auth/*.
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+export const API_BASE = API_URL;
 
 let accessToken: string | null = null;
 
@@ -39,6 +40,14 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
   const body = res.status === 204 ? {} : await res.json().catch(() => ({}));
   if (!res.ok) throw new ApiError(res.status, body as Record<string, unknown>);
   return body as T;
+}
+
+/** Fetches a report's HTML (with auth) and returns an object URL to open in a new tab. */
+export async function reportObjectUrl(orgId: string, reportId: string): Promise<string> {
+  let res = await raw(`/orgs/${orgId}/reports/${reportId}/download`, {});
+  if (res.status === 401 && (await refreshSession())) res = await raw(`/orgs/${orgId}/reports/${reportId}/download`, {});
+  if (!res.ok) throw new ApiError(res.status, {});
+  return URL.createObjectURL(await res.blob());
 }
 
 export async function login(email: string, password: string) {
@@ -137,10 +146,21 @@ export interface Finding {
 
 export type SeveritySummary = Record<Severity, number>;
 
+export interface Report {
+  id: string;
+  scopeId: string | null;
+  title: string;
+  format: string;
+  summary: { total: number; kev: number; bySeverity: SeveritySummary; scopeLabel?: string; topRisk?: number } & Record<string, unknown>;
+  byteSize: number;
+  createdAt: string;
+}
+
 export const can = {
   manageScopes: (r: Role) => r === "OWNER" || r === "ADMIN",
   runScans: (r: Role) => r !== "VIEWER",
   approve: (r: Role) => r === "OWNER" || r === "ADMIN",
   triage: (r: Role) => r !== "VIEWER",
+  createReport: (r: Role) => r !== "VIEWER",
   releaseKillSwitch: (r: Role) => r === "OWNER" || r === "ADMIN",
 };

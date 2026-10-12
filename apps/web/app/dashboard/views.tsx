@@ -13,6 +13,8 @@ import {
   type Scope,
   type Severity,
   type SeveritySummary,
+  type Report,
+  reportObjectUrl,
 } from "@/lib/api";
 
 type Act = (fn: () => Promise<unknown>, ok: string) => Promise<void>;
@@ -706,6 +708,110 @@ export function FindingsView({
         })}
       </ul>
       {shown.length === 0 && <p className="mt-6 text-muted">Everything&apos;s been resolved. Uncheck the filter to see fixed items.</p>}
+    </section>
+  );
+}
+
+// ── Reports ────────────────────────────────────────────────────────
+
+const fmtBytes = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${Math.round(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
+
+export function ReportsView({ org, reports, scopes, act }: { org: OrgSummary; reports: Report[]; scopes: Scope[]; act: Act }) {
+  const [scopeId, setScopeId] = useState<string>("");
+  const [busy, setBusy] = useState(false);
+  const [shareUrl, setShareUrl] = useState<{ id: string; url: string } | null>(null);
+  const live = scopes.filter((s) => s.status !== "REVOKED");
+
+  async function view(id: string) {
+    try {
+      const url = await reportObjectUrl(org.id, id);
+      window.open(url, "_blank", "noopener");
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch {
+      /* surfaced by the act() flow elsewhere; keep view resilient */
+    }
+  }
+
+  async function share(id: string) {
+    await act(async () => {
+      const res = await api<{ url: string }>(`/orgs/${org.id}/reports/${id}/share`, { method: "POST" });
+      setShareUrl({ id, url: res.url });
+      await navigator.clipboard.writeText(res.url).catch(() => {});
+    }, "Share link copied. It opens without a login and expires in 72 hours.");
+  }
+
+  return (
+    <section className="flex flex-col gap-6">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Reports</h1>
+        <p className="mt-2 max-w-2xl text-muted">
+          A report is a point-in-time snapshot of your open findings, risk-ranked with remediation. Generate one for your whole
+          organization or a single boundary, then share a time-limited link or save it as a PDF from your browser.
+        </p>
+      </div>
+
+      {can.createReport(org.role) && (
+        <div className="flex flex-wrap items-end gap-3 rounded-md border border-line bg-sheet p-4">
+          <label className="flex flex-col gap-1 text-sm font-medium">
+            Cover
+            <select value={scopeId} onChange={(e) => setScopeId(e.target.value)} className="rounded-md border border-line bg-sheet px-3 py-2">
+              <option value="">All boundaries</option>
+              {live.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.value}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              await act(() => api(`/orgs/${org.id}/reports`, { method: "POST", body: scopeId ? { scopeId } : {} }), "Report generated.");
+              setBusy(false);
+            }}
+            className={btnPrimary}
+          >
+            {busy ? "Generating…" : "Generate report"}
+          </button>
+        </div>
+      )}
+
+      {shareUrl && (
+        <p className="rounded-md border border-ok/30 bg-ok/10 px-3 py-2 text-sm [overflow-wrap:anywhere]">
+          Share link (copied): <span className="font-mono">{shareUrl.url}</span>
+        </p>
+      )}
+
+      {reports.length === 0 ? (
+        <p className="text-muted">No reports yet.</p>
+      ) : (
+        <ul className="flex flex-col divide-y divide-line border-y border-line">
+          {reports.map((r) => {
+            const sum = r.summary;
+            return (
+              <li key={r.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 py-3">
+                <div className="flex-1">
+                  <div className="font-medium">{(sum.scopeLabel as string) ?? "All boundaries"}</div>
+                  <div className="text-sm text-muted">
+                    {fmtDate(r.createdAt)} · {sum.total} finding{sum.total === 1 ? "" : "s"}
+                    {sum.kev > 0 && <span className="ml-1 font-medium text-stop">· {sum.kev} known-exploited</span>}
+                    <span className="ml-1">· {fmtBytes(r.byteSize)}</span>
+                  </div>
+                </div>
+                <button onClick={() => view(r.id)} className={btnQuiet}>
+                  View
+                </button>
+                {can.createReport(org.role) && (
+                  <button onClick={() => share(r.id)} className={btnQuiet}>
+                    Copy share link
+                  </button>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </section>
   );
 }

@@ -13,13 +13,15 @@ import {
   type Scan,
   type Scope,
   type SeveritySummary,
+  type Report,
 } from "@/lib/api";
-import { AssetsView, FindingsView, KillSwitch, ScansView, ScopesView } from "./views";
+import { AssetsView, FindingsView, KillSwitch, ReportsView, ScansView, ScopesView } from "./views";
 
-type Tab = "assets" | "findings" | "scopes" | "scans";
+type Tab = "assets" | "findings" | "reports" | "scopes" | "scans";
 const TABS: { id: Tab; label: string }[] = [
   { id: "assets", label: "Assets" },
   { id: "findings", label: "Findings" },
+  { id: "reports", label: "Reports" },
   { id: "scopes", label: "Ownership" },
   { id: "scans", label: "Scans" },
 ];
@@ -39,6 +41,7 @@ export default function Dashboard() {
   const [scans, setScans] = useState<Scan[]>([]);
   const [findings, setFindings] = useState<Finding[]>([]);
   const [summary, setSummary] = useState<SeveritySummary>(EMPTY_SUMMARY);
+  const [reports, setReports] = useState<Report[]>([]);
   const [notice, setNotice] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
 
   const org = useMemo(() => orgs?.find((o) => o.id === orgId) ?? null, [orgs, orgId]);
@@ -59,12 +62,13 @@ export default function Dashboard() {
   const reload = useCallback(async () => {
     if (!orgId) return;
     try {
-      const [o, sc, as, sn, fn] = await Promise.all([
+      const [o, sc, as, sn, fn, rp] = await Promise.all([
         api<{ org: { killSwitchEngaged: boolean } }>(`/orgs/${orgId}`),
         api<{ scopes: Scope[] }>(`/orgs/${orgId}/scopes`),
         api<{ assets: Asset[] }>(`/orgs/${orgId}/assets`),
         api<{ scans: Scan[] }>(`/orgs/${orgId}/scans`),
         api<{ findings: Finding[]; summary: SeveritySummary }>(`/orgs/${orgId}/findings`),
+        api<{ reports: Report[] }>(`/orgs/${orgId}/reports`),
       ]);
       setKillSwitch(o.org.killSwitchEngaged);
       setScopes(sc.scopes);
@@ -72,6 +76,7 @@ export default function Dashboard() {
       setScans(sn.scans);
       setFindings(fn.findings);
       setSummary(fn.summary);
+      setReports(rp.reports);
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) router.replace("/login");
     }
@@ -183,6 +188,7 @@ export default function Dashboard() {
           <AssetsView org={org} scopes={scopes} assets={assets} scans={scans} killSwitch={killSwitch} findings={findings} act={act} onGoToScopes={() => setTab("scopes")} />
         )}
         {tab === "findings" && <FindingsView org={org} findings={findings} summary={summary} act={act} />}
+        {tab === "reports" && <ReportsView org={org} reports={reports} scopes={scopes} act={act} />}
         {tab === "scopes" && <ScopesView org={org} scopes={scopes} act={act} />}
         {tab === "scans" && <ScansView org={org} scans={scans} assets={assets} act={act} />}
       </main>
