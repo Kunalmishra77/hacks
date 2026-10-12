@@ -9,6 +9,7 @@ import {
   type OrgRecord,
   type FindingRecord,
   type FindingStatus,
+  type ReportRecord,
   type RefreshTokenRecord,
   type ScanRecord,
   type ScopeRecord,
@@ -26,6 +27,7 @@ interface State {
   assets: AssetRecord[];
   scans: ScanRecord[];
   findings: FindingRecord[];
+  reports: (ReportRecord & { content: string })[];
   audit: AuditEvent[];
 }
 
@@ -39,6 +41,7 @@ const empty = (): State => ({
   assets: [],
   scans: [],
   findings: [],
+  reports: [],
   audit: [],
 });
 
@@ -288,6 +291,27 @@ export function createMemoryStore(): Store & { readonly auditEvents: readonly Au
         return killed;
       },
     },
+    reports: {
+      async create(input) {
+        const r = { id: randomUUID(), format: "HTML" as const, createdAt: new Date(), ...input };
+        s.reports.push(r);
+        const { content: _c, ...rec } = r;
+        return copy(rec);
+      },
+      async listByOrg(orgId) {
+        return s.reports.filter((r) => r.orgId === orgId).map(({ content: _c, ...rec }) => copy(rec)).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      },
+      async find(orgId, id) {
+        const r = s.reports.find((x) => x.id === id && x.orgId === orgId);
+        if (!r) return null;
+        const { content: _c, ...rec } = r;
+        return copy(rec);
+      },
+      async loadContent(id) {
+        const r = s.reports.find((x) => x.id === id);
+        return r ? { orgId: r.orgId, title: r.title, content: r.content } : null;
+      },
+    },
     findings: {
       async listByOrg(orgId, filter = {}) {
         const scopeIds = new Set(s.scopes.filter((sc) => sc.orgId === orgId).map((sc) => sc.id));
@@ -386,6 +410,7 @@ export function createMemoryStore(): Store & { readonly auditEvents: readonly Au
         assets: s.assets.map(copy),
         scans: s.scans.map(copy),
         findings: s.findings.map(copy),
+        reports: s.reports.map(copy),
         audit: s.audit.slice(),
       };
       try {

@@ -138,13 +138,15 @@ describe.skipIf(!dbUrl || !redisUrl)("end-to-end discovery (integration)", { tim
       }
       expect(status).toBe("SUCCEEDED");
 
-      // Enrichment runs off its own queue shortly after; wait for risk scores.
+      // Enrichment runs off its own queue shortly after; wait until every
+      // finding has a risk score.
+      const total = await prisma.finding.count({ where: { asset: { scopeId: scope.id } } });
       let enriched = 0;
-      for (let i = 0; i < 100 && enriched === 0; i++) {
+      for (let i = 0; i < 100 && enriched < total; i++) {
         await new Promise((r) => setTimeout(r, 200));
         enriched = await prisma.finding.count({ where: { asset: { scopeId: scope.id }, riskScore: { not: null } } });
       }
-      expect(enriched).toBeGreaterThan(0);
+      expect(enriched).toBe(total);
 
       const findings = await app.inject({ method: "GET", url: `/orgs/${org.id}/findings`, headers: bearer(accessToken) });
       const types = findings.json().findings.map((f: { type: string }) => f.type);

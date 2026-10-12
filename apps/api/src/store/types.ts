@@ -13,6 +13,18 @@ import type {
 
 export type FindingStatus = "OPEN" | "TRIAGED" | "FIXED" | "FALSE_POSITIVE";
 
+export interface ReportRecord {
+  id: string;
+  orgId: string;
+  scopeId: string | null;
+  title: string;
+  format: "HTML" | "PDF";
+  summary: unknown;
+  byteSize: number;
+  createdById: string;
+  createdAt: Date;
+}
+
 export interface FindingRecord {
   id: string;
   assetId: string;
@@ -209,6 +221,21 @@ export interface Store {
     summary(orgId: string): Promise<Record<Severity, number>>;
   };
   /** Read-only view the Scope Authorization Gate uses. */
+  reports: {
+    create(input: {
+      orgId: string;
+      scopeId: string | null;
+      title: string;
+      summary: Record<string, unknown>;
+      content: string;
+      byteSize: number;
+      createdById: string;
+    }): Promise<ReportRecord>;
+    listByOrg(orgId: string): Promise<ReportRecord[]>;
+    find(orgId: string, id: string): Promise<ReportRecord | null>;
+    /** For download: the stored body. Returns orgId so callers can double-check tenancy. */
+    loadContent(id: string): Promise<{ orgId: string; title: string; content: string | null } | null>;
+  };
   gate: GateRepository;
   memberships: {
     find(orgId: string, userId: string): Promise<MembershipRecord | null>;

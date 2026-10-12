@@ -103,6 +103,44 @@ describe.skipIf(!url)("prisma store (integration)", { timeout: 30_000 }, () => {
     );
   });
 
+  it("generates a report, stores it, and serves it by signed link on Postgres", async () => {
+    let token = "";
+    const verifier = createVerifier({ resolveTxt: async () => [[token]], fetchWellKnown: async () => "", assumeRoleAccount: async () => "" });
+    const app = await buildApp({ config: testConfig, store: createPrismaStore(prisma), verifier });
+    const suffix = Date.now();
+    const reg = await app.inject({ method: "POST", url: "/auth/register", payload: { email: `rep-${suffix}@example.com`, password: PASSWORD, orgName: "Report Co" } });
+    const { accessToken, org } = reg.json() as { accessToken: string; org: { id: string } };
+    const post = (url: string, payload?: object) => app.inject({ method: "POST", url, headers: bearer(accessToken), payload });
+
+    const scope = (await post(`/orgs/${org.id}/scopes`, { type: "DOMAIN", value: `rep-${suffix}.example.com` })).json().scope;
+    token = scope.verification.DNS_TXT.value;
+    await post(`/orgs/${org.id}/scopes/${scope.id}/verify`, { method: "DNS_TXT" });
+    const asset = await prisma.asset.findFirstOrThrow({ where: { scopeId: scope.id } });
+    await prisma.finding.create({
+      data: { assetId: asset.id, scanId: (await prisma.scan.create({ data: { orgId: org.id, scopeId: scope.id, assetId: asset.id, engine: "WEB", status: "SUCCEEDED", requestedById: reg.json().user.id } })).id,
+        fingerprint: "fp-rep-1", type: "web.exposed-git", severity: "HIGH", title: "Git exposed", remediation: "Block it", status: "OPEN", cveRefs: [], riskScore: 58 },
+    });
+
+    const gen = await post(`/orgs/${org.id}/reports`);
+    expect(gen.statusCode).toBe(201);
+    const reportId = gen.json().report.id as string;
+    expect(gen.json().report.summary.total).toBe(1);
+
+    const stored = await prisma.report.findUniqueOrThrow({ where: { id: reportId } });
+    expect(stored.content).toContain("<!doctype html>");
+    expect(stored.byteSize).toBeGreaterThan(0);
+
+    const share = await post(`/orgs/${org.id}/reports/${reportId}/share`);
+    const shareToken = new URL(share.json().url).searchParams.get("token")!;
+    const open = await app.inject({ method: "GET", url: `/reports/download?token=${shareToken}` });
+    expect(open.statusCode).toBe(200);
+    expect(open.body).toContain("Git exposed");
+    await app.close();
+
+    const actions = (await prisma.auditEvent.findMany({ where: { orgId: org.id } })).map((e) => e.action);
+    expect(actions).toEqual(expect.arrayContaining(["report.create", "report.shared"]));
+  });
+
   it("rejects UPDATE, DELETE and TRUNCATE on AuditEvent at the database level", async () => {
     const ev = await prisma.auditEvent.create({ data: { actorType: "system", action: "auth.login" } });
 

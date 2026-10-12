@@ -13,6 +13,7 @@ import { orgRoutes } from "./routes/orgs.js";
 import { createMemoryScanQueue, type ScanQueue } from "./queue.js";
 import { scanRoutes } from "./routes/scans.js";
 import { findingRoutes } from "./routes/findings.js";
+import { reportRoutes } from "./routes/reports.js";
 import { scopeRoutes } from "./routes/scopes.js";
 import { createVerifier, defaultVerificationDeps, type Verifier } from "./verification/verifiers.js";
 import { UniqueViolationError, type Store } from "./store/types.js";
@@ -94,6 +95,7 @@ export async function buildApp({
   await app.register(scopeRoutes, { config, store, limiter, verifier, queue });
   await app.register(scanRoutes, { config, store, gate, queue });
   await app.register(findingRoutes, { store });
+  await app.register(reportRoutes, { config, store });
 
   return app;
 }

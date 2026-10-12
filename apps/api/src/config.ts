@@ -26,6 +26,9 @@ const EnvSchema = z
     NVD_API_KEY: z.string().optional().or(z.literal("").transform(() => undefined)),
     // Run the CVE enrichment worker in this process. On by default; needs Redis.
     CVE_ENRICHMENT: z.enum(["on", "off"]).default("on"),
+    // Absolute base URL of this API, used to build shareable report links.
+    API_PUBLIC_URL: z.string().url().optional().or(z.literal("").transform(() => undefined)),
+    REPORT_SHARE_TTL_HOURS: z.coerce.number().int().min(1).max(720).default(72),
   })
   .refine((e) => e.JWT_SECRET !== e.JWT_REFRESH_SECRET, {
     message: "JWT_SECRET and JWT_REFRESH_SECRET must differ",
@@ -54,6 +57,8 @@ export interface AppConfig {
   awsTrustPrincipalArn?: string;
   nvdApiKey?: string;
   cveEnrichment: boolean;
+  apiPublicUrl?: string;
+  reportShareTtlHours: number;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -92,5 +97,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     awsTrustPrincipalArn: e.AWS_TRUST_PRINCIPAL_ARN,
     nvdApiKey: e.NVD_API_KEY,
     cveEnrichment: e.CVE_ENRICHMENT === "on",
+    apiPublicUrl: e.API_PUBLIC_URL,
+    reportShareTtlHours: e.REPORT_SHARE_TTL_HOURS,
   };
 }

@@ -21,6 +21,7 @@ export const testConfig: AppConfig = {
   scopeVerificationTtlDays: 90,
   gateLimits: { maxConcurrentScansPerOrg: 3, scanStartsPerScopePerMinute: 5 },
   cveEnrichment: false,
+  reportShareTtlHours: 72,
 };
 
 export async function makeApp(

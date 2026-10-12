@@ -63,6 +63,17 @@ const scopeSelect = {
   createdById: true,
   createdAt: true,
 } as const;
+const reportSelect = {
+  id: true,
+  orgId: true,
+  scopeId: true,
+  title: true,
+  format: true,
+  summary: true,
+  byteSize: true,
+  createdById: true,
+  createdAt: true,
+} as const;
 const scanSelect = {
   id: true,
   orgId: true,
@@ -219,6 +230,25 @@ function build(db: Db, root: PrismaClient): Store {
         for (const r of rows) out[r.severity] = r._count;
         return out;
       },
+    },
+    reports: {
+      create: (input) =>
+        db.report.create({
+          data: {
+            orgId: input.orgId,
+            scopeId: input.scopeId,
+            title: input.title,
+            format: "HTML",
+            summary: input.summary as Prisma.InputJsonObject,
+            content: input.content,
+            byteSize: input.byteSize,
+            createdById: input.createdById,
+          },
+          select: reportSelect,
+        }),
+      listByOrg: (orgId) => db.report.findMany({ where: { orgId }, select: reportSelect, orderBy: { createdAt: "desc" }, take: 200 }),
+      find: (orgId, id) => db.report.findFirst({ where: { id, orgId }, select: reportSelect }),
+      loadContent: (id) => db.report.findUnique({ where: { id }, select: { orgId: true, title: true, content: true } }),
     },
     gate: createPrismaGateRepository(db),
     memberships: {
