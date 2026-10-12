@@ -40,6 +40,25 @@ export interface WorkerStore {
    * FALSE_POSITIVE keeps that status.
    */
   upsertFinding(f: FindingUpsert): Promise<"created" | "updated" | "reopened">;
+  /** Findings most recently written by this scan, for enrichment. */
+  findingsForScan(scanId: string): Promise<EnrichableFinding[]>;
+  /** Writes enrichment (EPSS, KEV, risk, escalated severity) onto a finding. */
+  applyEnrichment(id: string, e: FindingEnrichment): Promise<void>;
+}
+
+export interface EnrichableFinding {
+  id: string;
+  cveRefs: string[];
+  severity: Severity;
+  criticality: "LOW" | "MEDIUM" | "HIGH";
+}
+
+export interface FindingEnrichment {
+  epss: number | null;
+  kevListed: boolean;
+  riskScore: number;
+  severity: Severity;
+  enrichedAt: Date;
 }
 
 export function createPrismaWorkerStore(prisma: PrismaClient): WorkerStore {
@@ -119,6 +138,19 @@ export function createPrismaWorkerStore(prisma: PrismaClient): WorkerStore {
         data: { ...fields, ...(reopened ? { status: "OPEN" as const } : {}) },
       });
       return reopened ? "reopened" : "updated";
+    },
+    async findingsForScan(scanId) {
+      const rows = await prisma.finding.findMany({
+        where: { lastScanId: scanId },
+        select: { id: true, cveRefs: true, severity: true, asset: { select: { scope: { select: { criticality: true } } } } },
+      });
+      return rows.map((r) => ({ id: r.id, cveRefs: r.cveRefs, severity: r.severity, criticality: r.asset.scope.criticality }));
+    },
+    async applyEnrichment(id, e) {
+      await prisma.finding.update({
+        where: { id },
+        data: { epss: e.epss, kevListed: e.kevListed, riskScore: e.riskScore, severity: e.severity, enrichedAt: e.enrichedAt },
+      });
     },
     async upsertAsset({ scopeId, kind, address, metadata, scanId, at }) {
       const meta = metadata === null ? Prisma.JsonNull : (metadata as Prisma.InputJsonObject);

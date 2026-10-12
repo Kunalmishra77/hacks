@@ -16,6 +16,7 @@
     "@aegis/core": "*",
     "@aegis/db": "*",
     "bullmq": "^5.81.5",
-    "ioredis": "^5.11.1"
+    "ioredis": "^5.11.1",
+    "@aegis/cve": "*"
   }
 }

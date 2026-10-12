@@ -78,6 +78,10 @@ function world() {
       Object.assign(ex, { severity: f.severity, title: f.title, evidence: f.evidence, seen: ex.seen + 1, status: reopened ? "OPEN" : ex.status });
       return reopened ? "reopened" : "updated";
     },
+    async findingsForScan() {
+      return [];
+    },
+    async applyEnrichment() {},
     async upsertAsset({ scopeId, kind, address, metadata }) {
       const existing = [...assets.values()].find((a) => a.scopeId === scopeId && a.kind === kind && a.address === address);
       if (existing) {
