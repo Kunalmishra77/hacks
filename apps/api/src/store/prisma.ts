@@ -179,6 +179,42 @@ function build(db: Db, root: PrismaClient): Store {
         await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${orgId}))`;
       },
     },
+    findings: {
+      async listByOrg(orgId, filter = {}) {
+        const rows = await db.finding.findMany({
+          where: {
+            asset: { scope: { orgId, ...(filter.scopeId ? { id: filter.scopeId } : {}) } },
+            ...(filter.status ? { status: filter.status } : {}),
+            ...(filter.severity ? { severity: filter.severity } : {}),
+            ...(filter.assetId ? { assetId: filter.assetId } : {}),
+          },
+          include: { asset: { select: { address: true, kind: true, scopeId: true } } },
+          orderBy: [{ severity: "desc" }, { lastSeenAt: "desc" }],
+          take: 1000,
+        });
+        return rows.map(({ asset, ...f }) => ({
+          ...f,
+          assetAddress: asset.address,
+          assetKind: asset.kind,
+          scopeId: asset.scopeId,
+        }));
+      },
+      find: (orgId, id) => db.finding.findFirst({ where: { id, asset: { scope: { orgId } } } }),
+      async setStatus(orgId, id, status) {
+        const r = await db.finding.updateMany({ where: { id, asset: { scope: { orgId } } }, data: { status } });
+        return r.count === 1;
+      },
+      async summary(orgId) {
+        const rows = await db.finding.groupBy({
+          by: ["severity"],
+          where: { asset: { scope: { orgId } }, status: { in: ["OPEN", "TRIAGED"] } },
+          _count: true,
+        });
+        const out = { INFO: 0, LOW: 0, MEDIUM: 0, HIGH: 0, CRITICAL: 0 };
+        for (const r of rows) out[r.severity] = r._count;
+        return out;
+      },
+    },
     gate: createPrismaGateRepository(db),
     memberships: {
       find: (orgId, userId) => db.membership.findUnique({ where: { orgId_userId: { orgId, userId } } }),

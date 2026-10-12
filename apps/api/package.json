@@ -27,6 +27,7 @@
   },
   "devDependencies": {
     "@aegis/worker-kit": "*",
-    "@aegis/worker-discovery": "*"
+    "@aegis/worker-discovery": "*",
+    "@aegis/worker-web": "*"
   }
 }

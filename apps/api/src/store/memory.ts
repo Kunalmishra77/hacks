@@ -7,6 +7,8 @@ import {
   type InviteRecord,
   type MembershipRecord,
   type OrgRecord,
+  type FindingRecord,
+  type FindingStatus,
   type RefreshTokenRecord,
   type ScanRecord,
   type ScopeRecord,
@@ -23,6 +25,7 @@ interface State {
   scopes: ScopeRecord[];
   assets: AssetRecord[];
   scans: ScanRecord[];
+  findings: FindingRecord[];
   audit: AuditEvent[];
 }
 
@@ -35,6 +38,7 @@ const empty = (): State => ({
   scopes: [],
   assets: [],
   scans: [],
+  findings: [],
   audit: [],
 });
 
@@ -278,6 +282,46 @@ export function createMemoryStore(): Store & { readonly auditEvents: readonly Au
         return killed;
       },
     },
+    findings: {
+      async listByOrg(orgId, filter = {}) {
+        const scopeIds = new Set(s.scopes.filter((sc) => sc.orgId === orgId).map((sc) => sc.id));
+        const order = { INFO: 0, LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
+        return s.findings
+          .map((f) => ({ f, asset: s.assets.find((a) => a.id === f.assetId)! }))
+          .filter(({ f, asset }) => asset && scopeIds.has(asset.scopeId))
+          .filter(({ f, asset }) =>
+            (!filter.status || f.status === filter.status) &&
+            (!filter.severity || f.severity === filter.severity) &&
+            (!filter.assetId || f.assetId === filter.assetId) &&
+            (!filter.scopeId || asset.scopeId === filter.scopeId))
+          .sort((a, b) => order[b.f.severity] - order[a.f.severity] || b.f.lastSeenAt.getTime() - a.f.lastSeenAt.getTime())
+          .map(({ f, asset }) => ({ ...copy(f), assetAddress: asset.address, assetKind: asset.kind, scopeId: asset.scopeId }));
+      },
+      async find(orgId, id) {
+        const f = s.findings.find((x) => x.id === id);
+        if (!f) return null;
+        const asset = s.assets.find((a) => a.id === f.assetId);
+        const scope = asset && s.scopes.find((sc) => sc.id === asset.scopeId && sc.orgId === orgId);
+        return scope ? copy(f) : null;
+      },
+      async setStatus(orgId, id, status) {
+        const f = s.findings.find((x) => x.id === id);
+        const asset = f && s.assets.find((a) => a.id === f.assetId);
+        const scope = asset && s.scopes.find((sc) => sc.id === asset.scopeId && sc.orgId === orgId);
+        if (!f || !scope) return false;
+        f.status = status;
+        return true;
+      },
+      async summary(orgId) {
+        const scopeIds = new Set(s.scopes.filter((sc) => sc.orgId === orgId).map((sc) => sc.id));
+        const out = { INFO: 0, LOW: 0, MEDIUM: 0, HIGH: 0, CRITICAL: 0 };
+        for (const f of s.findings) {
+          const asset = s.assets.find((a) => a.id === f.assetId);
+          if (asset && scopeIds.has(asset.scopeId) && (f.status === "OPEN" || f.status === "TRIAGED")) out[f.severity]++;
+        }
+        return out;
+      },
+    },
     gate: {
       async findAssetWithScope(assetId) {
         const asset = s.assets.find((a) => a.id === assetId);
@@ -335,6 +379,7 @@ export function createMemoryStore(): Store & { readonly auditEvents: readonly Au
         scopes: s.scopes.map(copy),
         assets: s.assets.map(copy),
         scans: s.scans.map(copy),
+        findings: s.findings.map(copy),
         audit: s.audit.slice(),
       };
       try {

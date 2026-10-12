@@ -7,8 +7,27 @@ import type {
   ScanStatus,
   ScopeStatus,
   ScopeType,
+  Severity,
   VerificationMethod,
 } from "@aegis/core";
+
+export type FindingStatus = "OPEN" | "TRIAGED" | "FIXED" | "FALSE_POSITIVE";
+
+export interface FindingRecord {
+  id: string;
+  assetId: string;
+  scanId: string;
+  type: string;
+  severity: Severity;
+  cvss: number | null;
+  cveRefs: string[];
+  title: string;
+  evidence: unknown;
+  remediation: string | null;
+  status: FindingStatus;
+  firstSeenAt: Date;
+  lastSeenAt: Date;
+}
 
 // Persistence boundary for the API. Routes depend on this interface only, so
 // they run against Postgres (prisma.ts) in production and an in-memory
@@ -170,6 +189,17 @@ export interface Store {
      * concurrency cap can be checked and the scan created atomically.
      */
     lockOrg(orgId: string): Promise<void>;
+  };
+  findings: {
+    listByOrg(
+      orgId: string,
+      filter?: { status?: FindingStatus; severity?: Severity; scopeId?: string; assetId?: string },
+    ): Promise<(FindingRecord & { assetAddress: string; assetKind: AssetKind; scopeId: string })[]>;
+    find(orgId: string, id: string): Promise<FindingRecord | null>;
+    /** Changes a finding's triage status. Returns false if it doesn't exist in the org. */
+    setStatus(orgId: string, id: string, status: FindingStatus): Promise<boolean>;
+    /** Open/triaged counts per severity, for the dashboard summary. */
+    summary(orgId: string): Promise<Record<Severity, number>>;
   };
   /** Read-only view the Scope Authorization Gate uses. */
   gate: GateRepository;
