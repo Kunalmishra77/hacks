@@ -1,5 +1,7 @@
 import { prisma } from "@aegis/db";
 import { createMemoryRateLimiter } from "@aegis/core";
+import { createCveIntel } from "@aegis/cve";
+import { startEnrichmentWorker } from "@aegis/worker-kit";
 import { buildApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { checkEvictionPolicy, connectRedis, createRedisRateLimiter } from "./redis.js";
@@ -28,9 +30,25 @@ if (redis) {
   app.log.warn("REDIS_URL not set: in-process rate limits and NO scan queue (scans are recorded but never run)");
 }
 
+// CVE enrichment (Phase 3.5) runs here, where the NVD key lives, not on the
+// scan workers. Without a key NVD still works at a lower rate limit; EPSS and
+// KEV need no key.
+let enrichment: { close(): Promise<void> } | undefined;
+if (config.redisUrl && config.cveEnrichment) {
+  if (!config.nvdApiKey) app.log.warn("NVD_API_KEY not set: CVE enrichment runs with NVD's lower anonymous rate limit");
+  enrichment = startEnrichmentWorker({
+    redisUrl: config.redisUrl,
+    prisma,
+    intel: createCveIntel({ apiKey: config.nvdApiKey, log: (msg, data) => app.log.warn({ ...data }, msg) }),
+    log: (msg, data) => app.log.info({ ...data }, msg),
+  });
+  app.log.info("CVE enrichment worker started");
+}
+
 const shutdown = async (signal: string) => {
   app.log.info({ signal }, "shutting down");
   await app.close();
+  await enrichment?.close();
   redis?.disconnect();
   await prisma.$disconnect();
   process.exit(0);

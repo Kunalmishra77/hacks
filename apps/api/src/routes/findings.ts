@@ -29,6 +29,10 @@ function dto(f: FindingRecord & { assetAddress?: string; assetKind?: string; sco
     evidence: f.evidence,
     remediation: f.remediation,
     status: f.status,
+    epss: f.epss,
+    kevListed: f.kevListed,
+    riskScore: f.riskScore,
+    enrichedAt: f.enrichedAt,
     firstSeenAt: f.firstSeenAt,
     lastSeenAt: f.lastSeenAt,
   };

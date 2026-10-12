@@ -35,17 +35,20 @@ const METHODS_BY_TYPE: Record<ScopeType, readonly VerificationMethod[]> = {
 
 const VERIFY_ATTEMPTS_PER_HOUR = 10;
 
+const Criticality = z.enum(["LOW", "MEDIUM", "HIGH"]);
 const CreateScopeBody = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("DOMAIN"), value: z.string().max(253), allowedEngines: z.array(z.enum(ENGINES)).optional() }),
-  z.object({ type: z.literal("IP_RANGE"), value: z.string().max(64), allowedEngines: z.array(z.enum(ENGINES)).optional() }),
+  z.object({ type: z.literal("DOMAIN"), value: z.string().max(253), allowedEngines: z.array(z.enum(ENGINES)).optional(), criticality: Criticality.optional() }),
+  z.object({ type: z.literal("IP_RANGE"), value: z.string().max(64), allowedEngines: z.array(z.enum(ENGINES)).optional(), criticality: Criticality.optional() }),
   z.object({
     type: z.literal("CLOUD_ACCOUNT"),
     value: z.string().regex(/^aws:\d{12}$/, "must be aws:<12-digit account id>"),
     roleArn: z.string().regex(/^arn:aws:iam::\d{12}:role\/[\w+=,.@\/-]{1,512}$/, "must be an IAM role ARN"),
     allowedEngines: z.array(z.enum(ENGINES)).optional(),
+    criticality: Criticality.optional(),
   }),
 ]);
 
+const UpdateScopeBody = z.object({ criticality: Criticality });
 const VerifyBody = z.object({ method: z.enum(["DNS_TXT", "HTTP_FILE", "CLOUD_ROLE"]) });
 const ScopeParams = z.object({ orgId: z.string().uuid(), scopeId: z.string().uuid() });
 const AssetsQuery = z.object({ scopeId: z.string().uuid().optional() });
@@ -139,6 +142,7 @@ function scopeDto(scope: ScopeRecord, config: AppConfig) {
     revokedAt: scope.revokedAt,
     allowedEngines: scope.allowedEngines,
     maxRequestsPerSec: scope.maxRequestsPerSec,
+    criticality: scope.criticality,
     lastVerificationAt: scope.lastVerificationAt,
     lastVerificationError: scope.lastVerificationError,
     createdAt: scope.createdAt,
@@ -172,6 +176,7 @@ export async function scopeRoutes(
           type: body.type,
           value,
           allowedEngines,
+          criticality: body.criticality ?? "MEDIUM",
           verificationToken: `aegis-verify=${randomBytes(24).toString("base64url")}`,
           cloudRoleArn: body.type === "CLOUD_ACCOUNT" ? body.roleArn : null,
           externalId: body.type === "CLOUD_ACCOUNT" ? `aegis-${randomUUID()}` : null,
@@ -206,6 +211,19 @@ export async function scopeRoutes(
       const scope = await store.scopes.find(req.membership!.orgId, scopeId);
       if (!scope) return reply.code(404).send({ error: "not_found" });
       return { scope: scopeDto(scope, config) };
+    },
+  );
+
+  // Set how important this boundary is; it scales its findings' risk scores.
+  app.post(
+    "/orgs/:orgId/scopes/:scopeId/criticality",
+    { preHandler: [app.authenticate, app.requirePermission("scope.manage")] },
+    async (req, reply) => {
+      const { scopeId } = ScopeParams.parse(req.params);
+      const { criticality } = UpdateScopeBody.parse(req.body);
+      const updated = await store.scopes.setCriticality(req.membership!.orgId, scopeId, criticality);
+      if (!updated) return reply.code(404).send({ error: "not_found" });
+      return { scope: scopeDto(updated, config) };
     },
   );
 

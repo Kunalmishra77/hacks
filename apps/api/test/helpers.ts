@@ -20,6 +20,7 @@ export const testConfig: AppConfig = {
   authRateLimit: { max: 1000, timeWindowMs: 60_000 },
   scopeVerificationTtlDays: 90,
   gateLimits: { maxConcurrentScansPerOrg: 3, scanStartsPerScopePerMinute: 5 },
+  cveEnrichment: false,
 };
 
 export async function makeApp(

@@ -23,6 +23,9 @@ const EnvSchema = z
     MAX_CONCURRENT_SCANS_PER_ORG: z.coerce.number().int().positive().default(3),
     SCAN_STARTS_PER_SCOPE_PER_MINUTE: z.coerce.number().int().positive().default(5),
     AWS_TRUST_PRINCIPAL_ARN: z.string().optional().or(z.literal("").transform(() => undefined)),
+    NVD_API_KEY: z.string().optional().or(z.literal("").transform(() => undefined)),
+    // Run the CVE enrichment worker in this process. On by default; needs Redis.
+    CVE_ENRICHMENT: z.enum(["on", "off"]).default("on"),
   })
   .refine((e) => e.JWT_SECRET !== e.JWT_REFRESH_SECRET, {
     message: "JWT_SECRET and JWT_REFRESH_SECRET must differ",
@@ -49,6 +52,8 @@ export interface AppConfig {
   gateLimits: { maxConcurrentScansPerOrg: number; scanStartsPerScopePerMinute: number };
   /** Our AWS principal customers trust in their read-only role. */
   awsTrustPrincipalArn?: string;
+  nvdApiKey?: string;
+  cveEnrichment: boolean;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -85,5 +90,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       scanStartsPerScopePerMinute: e.SCAN_STARTS_PER_SCOPE_PER_MINUTE,
     },
     awsTrustPrincipalArn: e.AWS_TRUST_PRINCIPAL_ARN,
+    nvdApiKey: e.NVD_API_KEY,
+    cveEnrichment: e.CVE_ENRICHMENT === "on",
   };
 }

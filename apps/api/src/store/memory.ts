@@ -207,6 +207,12 @@ export function createMemoryStore(): Store & { readonly auditEvents: readonly Au
         const sc = s.scopes.find((x) => x.id === id);
         if (sc) Object.assign(sc, { lastVerificationAt: at, lastVerificationError: error });
       },
+      async setCriticality(orgId, id, criticality) {
+        const sc = s.scopes.find((x) => x.id === id && x.orgId === orgId);
+        if (!sc) return null;
+        sc.criticality = criticality;
+        return copy(sc);
+      },
       async revoke(id, at) {
         const sc = s.scopes.find((x) => x.id === id);
         if (sc) Object.assign(sc, { status: "REVOKED", revokedAt: at });
@@ -294,7 +300,7 @@ export function createMemoryStore(): Store & { readonly auditEvents: readonly Au
             (!filter.severity || f.severity === filter.severity) &&
             (!filter.assetId || f.assetId === filter.assetId) &&
             (!filter.scopeId || asset.scopeId === filter.scopeId))
-          .sort((a, b) => order[b.f.severity] - order[a.f.severity] || b.f.lastSeenAt.getTime() - a.f.lastSeenAt.getTime())
+          .sort((a, b) => (b.f.riskScore ?? -1) - (a.f.riskScore ?? -1) || order[b.f.severity] - order[a.f.severity] || b.f.lastSeenAt.getTime() - a.f.lastSeenAt.getTime())
           .map(({ f, asset }) => ({ ...copy(f), assetAddress: asset.address, assetKind: asset.kind, scopeId: asset.scopeId }));
       },
       async find(orgId, id) {

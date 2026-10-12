@@ -25,6 +25,10 @@ export interface FindingRecord {
   evidence: unknown;
   remediation: string | null;
   status: FindingStatus;
+  epss: number | null;
+  kevListed: boolean;
+  riskScore: number | null;
+  enrichedAt: Date | null;
   firstSeenAt: Date;
   lastSeenAt: Date;
 }
@@ -88,6 +92,7 @@ export interface ScopeRecord {
   revokedAt: Date | null;
   allowedEngines: Engine[];
   maxRequestsPerSec: number;
+  criticality: "LOW" | "MEDIUM" | "HIGH";
   cloudRoleArn: string | null;
   externalId: string | null;
   lastVerificationAt: Date | null;
@@ -143,6 +148,7 @@ export interface Store {
       type: ScopeType;
       value: string;
       allowedEngines: Engine[];
+      criticality: "LOW" | "MEDIUM" | "HIGH";
       verificationToken: string;
       cloudRoleArn: string | null;
       externalId: string | null;
@@ -156,6 +162,7 @@ export interface Store {
       input: { method: VerificationMethod; at: Date; expiresAt: Date },
     ): Promise<ScopeRecord>;
     recordVerificationFailure(id: string, at: Date, error: string): Promise<void>;
+    setCriticality(orgId: string, id: string, criticality: "LOW" | "MEDIUM" | "HIGH"): Promise<ScopeRecord | null>;
     revoke(id: string, at: Date): Promise<void>;
   };
   assets: {

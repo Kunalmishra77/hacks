@@ -55,6 +55,7 @@ const scopeSelect = {
   revokedAt: true,
   allowedEngines: true,
   maxRequestsPerSec: true,
+  criticality: true,
   cloudRoleArn: true,
   externalId: true,
   lastVerificationAt: true,
@@ -120,6 +121,10 @@ function build(db: Db, root: PrismaClient): Store {
         }),
       async recordVerificationFailure(id, at, error) {
         await db.scope.update({ where: { id }, data: { lastVerificationAt: at, lastVerificationError: error } });
+      },
+      async setCriticality(orgId, id, criticality) {
+        const r = await db.scope.updateMany({ where: { id, orgId }, data: { criticality } });
+        return r.count === 1 ? db.scope.findUnique({ where: { id }, select: scopeSelect }) : null;
       },
       async revoke(id, at) {
         await db.scope.update({ where: { id }, data: { status: "REVOKED", revokedAt: at } });
@@ -189,7 +194,7 @@ function build(db: Db, root: PrismaClient): Store {
             ...(filter.assetId ? { assetId: filter.assetId } : {}),
           },
           include: { asset: { select: { address: true, kind: true, scopeId: true } } },
-          orderBy: [{ severity: "desc" }, { lastSeenAt: "desc" }],
+          orderBy: [{ riskScore: { sort: "desc", nulls: "last" } }, { severity: "desc" }, { lastSeenAt: "desc" }],
           take: 1000,
         });
         return rows.map(({ asset, ...f }) => ({

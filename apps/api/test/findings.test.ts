@@ -31,16 +31,16 @@ async function setup() {
 
   // Seed findings the way a worker would have written them.
   const now = new Date();
-  const mk = (id: string, severity: string, status: string, type: string) =>
+  const mk = (id: string, severity: string, status: string, type: string, riskScore: number | null = null) =>
     ctx.store.raw.findings.push({
       id, assetId: asset.id, scanId: "scan-x", type, severity: severity as never, cvss: null, cveRefs: [],
       title: `${type} on ${asset.address}`, evidence: { url: `https://${asset.address}/` }, remediation: "Fix it",
-      status: status as never, firstSeenAt: now, lastSeenAt: now,
+      status: status as never, epss: null, kevListed: false, riskScore, enrichedAt: riskScore === null ? null : now, firstSeenAt: now, lastSeenAt: now,
     });
   const gitId = randomUUID();
-  mk(gitId, "HIGH", "OPEN", "web.exposed-git");
-  mk(randomUUID(), "LOW", "OPEN", "web.missing-hsts");
-  mk(randomUUID(), "INFO", "FIXED", "web.no-security-txt");
+  mk(gitId, "HIGH", "OPEN", "web.exposed-git", 72);
+  mk(randomUUID(), "LOW", "OPEN", "web.missing-hsts", 5);
+  mk(randomUUID(), "INFO", "FIXED", "web.no-security-txt", 1);
 
   async function member(email: string, role: string) {
     const inv = await post(`/orgs/${orgId}/invites`, T, { email, role });
@@ -62,6 +62,15 @@ describe("findings", () => {
     expect(body.findings[0]).toMatchObject({ severity: "HIGH", assetAddress: "example.com", status: "OPEN" });
     // Summary counts only OPEN/TRIAGED.
     expect(body.summary).toEqual({ INFO: 0, LOW: 1, MEDIUM: 0, HIGH: 1, CRITICAL: 0 });
+  });
+
+  it("orders by risk score and exposes enrichment fields", async () => {
+    const s = await setup();
+    const body = (await s.get(`/orgs/${s.orgId}/findings`)).json();
+    // Default filter hides the FIXED no-security-txt; open findings sort by risk desc.
+    expect(body.findings.map((f: { riskScore: number }) => f.riskScore)).toEqual([72, 5, 1]);
+    expect(body.findings[0]).toHaveProperty("kevListed");
+    expect(body.findings[0]).toHaveProperty("epss");
   });
 
   it("filters by status and severity", async () => {

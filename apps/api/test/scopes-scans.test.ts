@@ -120,6 +120,20 @@ describe("scopes + ownership verification", () => {
     expect((await s.post(`/orgs/${s.orgId}/scopes/${scope.id}/verify`, s.T, { method: "DNS_TXT" })).statusCode).toBe(400);
   });
 
+  it("defaults criticality to MEDIUM and lets an admin change it", async () => {
+    const s = await setup();
+    const created = await s.post(`/orgs/${s.orgId}/scopes`, s.T, { type: "DOMAIN", value: "example.com", criticality: "HIGH" });
+    expect(created.json().scope.criticality).toBe("HIGH");
+    const dflt = await s.post(`/orgs/${s.orgId}/scopes`, s.T, { type: "DOMAIN", value: "other.example" });
+    expect(dflt.json().scope.criticality).toBe("MEDIUM");
+    const upd = await s.post(`/orgs/${s.orgId}/scopes/${dflt.json().scope.id}/criticality`, s.T, { criticality: "LOW" });
+    expect(upd.statusCode).toBe(200);
+    expect(upd.json().scope.criticality).toBe("LOW");
+
+    const analyst = await s.member("an@acme.io", "ANALYST");
+    expect((await s.post(`/orgs/${s.orgId}/scopes/${dflt.json().scope.id}/criticality`, analyst, { criticality: "HIGH" })).statusCode).toBe(403);
+  });
+
   it("verifies a cloud account via its read-only role", async () => {
     const s = await setup();
     const scope = (

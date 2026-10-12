@@ -4,7 +4,7 @@
 // tools, so nothing on the internet is contacted.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrismaClient } from "@aegis/db";
-import { startEngineWorker } from "@aegis/worker-kit";
+import { startEnrichmentWorker, startEngineWorker } from "@aegis/worker-kit";
 import { createDiscoveryEngine } from "@aegis/worker-discovery/engine";
 import { createWebEngine } from "@aegis/worker-web/engine";
 import { buildApp } from "../src/app.js";
@@ -122,6 +122,9 @@ describe.skipIf(!dbUrl || !redisUrl)("end-to-end discovery (integration)", { tim
       request: async (url) => page(url.pathname),
     });
     const worker = startEngineWorker({ engine, redisUrl: redisUrl!, prisma, log: () => {} });
+    // Enrichment with canned intel, so no external calls but the real queue path runs.
+    const intel = { lookup: async () => new Map() };
+    const enrich = startEnrichmentWorker({ redisUrl: redisUrl!, prisma, intel, log: () => {} });
 
     try {
       const res = await post(`/orgs/${org.id}/scans`, { assetId: asset.id, engine: "WEB" });
@@ -135,11 +138,21 @@ describe.skipIf(!dbUrl || !redisUrl)("end-to-end discovery (integration)", { tim
       }
       expect(status).toBe("SUCCEEDED");
 
+      // Enrichment runs off its own queue shortly after; wait for risk scores.
+      let enriched = 0;
+      for (let i = 0; i < 100 && enriched === 0; i++) {
+        await new Promise((r) => setTimeout(r, 200));
+        enriched = await prisma.finding.count({ where: { asset: { scopeId: scope.id }, riskScore: { not: null } } });
+      }
+      expect(enriched).toBeGreaterThan(0);
+
       const findings = await app.inject({ method: "GET", url: `/orgs/${org.id}/findings`, headers: bearer(accessToken) });
       const types = findings.json().findings.map((f: { type: string }) => f.type);
       expect(types).toContain("web.exposed-git");
       expect(types).toContain("web.missing-hsts");
       expect(findings.json().summary.HIGH).toBeGreaterThanOrEqual(1);
+      // Findings carry a risk score, and the worst comes first.
+      expect(findings.json().findings[0].riskScore).toBeGreaterThanOrEqual(findings.json().findings.at(-1).riskScore);
       // No raw body or secret leaked into stored evidence.
       expect(JSON.stringify(findings.json().findings)).not.toContain("refs/heads");
 
@@ -155,6 +168,7 @@ describe.skipIf(!dbUrl || !redisUrl)("end-to-end discovery (integration)", { tim
       }
       expect(await prisma.finding.count({ where: { asset: { scopeId: scope.id } } })).toBe(before);
     } finally {
+      await enrich.close();
       await worker.close();
       await app.close();
       await queue.close();
