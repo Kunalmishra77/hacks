@@ -6,11 +6,10 @@ authorized to test**, and tells it how to fix them. It never exploits, brute-for
 or runs destructive actions. See [CLAUDE.md](CLAUDE.md) for the non-negotiable rules
 and [docs/](docs/) for the PRD, architecture, and scope-authorization design.
 
-> **Status: Phase 3 (Assessment engines) done.** Everything from Phase 0–2, plus
-> three sandboxed assessment engines — **TLS** (testssl.sh), **Web** (security
-> headers, cookie flags, exposed files), and **Network** (naabu + fingerprintx,
-> Admin-approved) — and a Findings inventory with severity, remediation and triage.
-> CVE intel enrichment (NVD + EPSS + CISA KEV) is Phase 3.5.
+> **Status: Phase 3.5 (CVE intel enrichment) done.** Everything from Phase 0–3,
+> plus findings enriched with **CVSS** (NVD), **EPSS** exploit probability and the
+> **CISA KEV** known-exploited flag, combined into a single risk score
+> (CVSS × EPSS × asset importance, KEV-escalated). Scheduling/monitoring is Phase 6.
 
 ## Repository layout
 
@@ -22,7 +21,7 @@ packages/
   core/       Shared types, RBAC, audit helper, Scope Authorization Gate, SSRF guard
   db/         Prisma schema, migrations, client, gate repository
   worker-kit/ Job lifecycle every worker shares: gate re-check, heartbeat, safe tool runner
-  cve/        NVD mirror + version→CVE matching (empty until Phase 3)
+  cve/        CVE intel: NVD (CVSS), EPSS, CISA KEV, and the risk-score formula
 workers/
   discovery/  crt.sh + subfinder (passive) → DNS → httpx liveness
   tls/        testssl.sh wrapper: protocol, cipher and certificate hygiene
@@ -158,6 +157,30 @@ fingerprintx (Apache-2.0) instead; swap in nmap later if you hold a licence for
 it. nuclei is not run in Phase 3: even its non-exploit template folders contain
 templates that send crafted requests or reach cloud-metadata endpoints, which is
 more than "identify", so Web uses a small, auditable set of native checks.
+
+## CVE intel & risk scoring (Phase 3.5)
+
+A flat list of CVEs doesn't tell you what to fix first. After a scan writes
+findings, an enrichment pass pulls three signals and combines them:
+
+- **CVSS** (from NVD) — how severe the flaw is, 0–10.
+- **EPSS** (from FIRST.org) — the probability it'll be exploited in the next 30 days.
+- **CISA KEV** — whether it's *already* being exploited in the wild.
+
+Each finding gets a **risk score (0–100)** = `CVSS × EPSS × asset-importance`,
+and anything on the KEV list is escalated to the top (min score 85, at least
+HIGH). Findings without a CVE (missing headers, insecure cookies) still get a
+score from their engine severity, so one ranked worklist covers everything.
+"Importance" is a per-boundary setting (Ownership tab) — mark your production
+domain HIGH and a staging box LOW to tune the ranking.
+
+**Where the keys live.** Enrichment runs in the **API process**, next to the
+NVD key, as a separate BullMQ worker. The scan workers on the VPS never receive
+the key — a scan worker finishes, enqueues `{scanId}`, and the enrichment worker
+(with the key) does the lookups. NVD CVSS is cached indefinitely, EPSS daily,
+and the KEV catalog on a TTL. The whole pass is advisory and fails soft: if a
+source is down, the finding is still scored from what's known, and the scan is
+never affected. Set `CVE_ENRICHMENT=off` to disable it.
 
 ## Scope Authorization Gate
 

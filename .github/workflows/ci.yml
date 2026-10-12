@@ -41,6 +41,8 @@ jobs:
       TEST_DATABASE_URL: postgresql://aegis:aegis_ci@localhost:5432/aegis_ci?schema=public
       TEST_REDIS_URL: redis://localhost:6379
       NEXT_TELEMETRY_DISABLED: "1"
+      # Optional: add an NVD_API_KEY repo secret to enable the live CVE intel test.
+      NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
 
     steps:
       - uses: actions/checkout@v4
@@ -72,6 +74,14 @@ jobs:
       # Everything: unit tests + Postgres/Redis integration tests.
       - name: Test
         run: npm test
+
+      # Live CVE intel against NVD/EPSS/KEV, only when the NVD key secret is set.
+      - name: CVE intel (live)
+        if: env.NVD_API_KEY != ''
+        env:
+          CVE_LIVE: "1"
+        run: npx vitest run test/live.integration.test.ts
+        working-directory: packages/cve
 
   # Each worker image must build, run as non-root, and contain working,
   # flag-compatible tools (the Dockerfiles assert the flags we depend on).

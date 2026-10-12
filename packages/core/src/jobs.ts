@@ -17,3 +17,11 @@ export interface ScanJobPayload {
 export function scanQueueName(engine: Engine): string {
   return `aegis-scan-${engine.toLowerCase()}`;
 }
+
+/** Enrichment job: enrich the CVE-bearing findings produced by one scan. */
+export interface EnrichJobPayload {
+  scanId: string;
+  orgId: string;
+}
+
+export const ENRICH_QUEUE = "aegis-enrich";
