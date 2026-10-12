@@ -6,10 +6,11 @@ authorized to test**, and tells it how to fix them. It never exploits, brute-for
 or runs destructive actions. See [CLAUDE.md](CLAUDE.md) for the non-negotiable rules
 and [docs/](docs/) for the PRD, architecture, and scope-authorization design.
 
-> **Status: Phase 2 (Discovery) done.** Accounts, orgs, roles, audit log, scopes
-> with ownership verification, the Scope Authorization Gate, a BullMQ scan queue,
-> the sandboxed **discovery worker** (passive subdomains, DNS, HTTP(S) liveness)
-> and the asset inventory dashboard. Assessment engines (network/TLS/web) are Phase 3.
+> **Status: Phase 3 (Assessment engines) done.** Everything from Phase 0–2, plus
+> three sandboxed assessment engines — **TLS** (testssl.sh), **Web** (security
+> headers, cookie flags, exposed files), and **Network** (naabu + fingerprintx,
+> Admin-approved) — and a Findings inventory with severity, remediation and triage.
+> CVE intel enrichment (NVD + EPSS + CISA KEV) is Phase 3.5.
 
 ## Repository layout
 
@@ -23,7 +24,10 @@ packages/
   worker-kit/ Job lifecycle every worker shares: gate re-check, heartbeat, safe tool runner
   cve/        NVD mirror + version→CVE matching (empty until Phase 3)
 workers/
-  discovery/  crt.sh + subfinder (passive) → DNS → httpx liveness, in a sandboxed container
+  discovery/  crt.sh + subfinder (passive) → DNS → httpx liveness
+  tls/        testssl.sh wrapper: protocol, cipher and certificate hygiene
+  web/        security headers, cookie flags, exposed-file probes (no external tools)
+  network/    naabu (connect scan) + fingerprintx service ID; Admin-approved
 docs/         PRD, ARCHITECTURE, SCOPE_AUTHORIZATION, POWER_UP, DEPLOY_VPS
 docker-compose.yml   Optional local Postgres, Redis, MinIO
 ```
@@ -72,7 +76,8 @@ npm run db:migrate           # dev only: create a new migration after editing sc
 ```bash
 npm run dev:api              # http://127.0.0.1:4000  (GET /health)
 npm run dev:web              # http://localhost:3000
-npm run dev:worker:discovery # local worker (needs subfinder + httpx on PATH); production uses Docker on the VPS
+npm run dev:worker:discovery # local worker (needs subfinder + httpx on PATH)
+# TLS/Web/Network workers run on the VPS as Docker containers (docs/DEPLOY_VPS.md)
 ```
 
 Create an account (there's no sign-up page yet):
@@ -128,6 +133,31 @@ Anything a tool returns outside the boundary is dropped before it reaches the da
 Port scanning is not part of discovery; it's the approval-gated NETWORK engine (Phase 3).
 While a job runs, the worker re-checks the gate every 15 s, so the kill-switch, a scan kill
 or a revoked/expired scope stops it. Deploy workers with [docs/DEPLOY_VPS.md](docs/DEPLOY_VPS.md).
+
+## Assessment engines (Phase 3)
+
+Once an asset is known, run a check on it from the Assets tab. Each engine is its
+own sandboxed worker that re-checks the gate, identifies exposure non-intrusively,
+and writes **Findings** (severity, plain-language fix, redacted evidence):
+
+| Engine | Tool | What it does | Deliberately does NOT |
+|---|---|---|---|
+| **TLS** | testssl.sh | protocols, ciphers, certificate hygiene | Heartbleed / CCS / ROBOT / Ticketbleed (memory-read or handshake-flood checks) |
+| **Web** | built-in | HSTS/CSP/cookie flags, version disclosure, a curated exposed-file list (`.git`, `.env`, …), security.txt | follow redirects, store response bodies, send payloads |
+| **Network** | naabu + fingerprintx | open TCP ports (top 100, connect scan) and the service/version on each | SYN/raw scanning, nmap, logins, brute force, payloads — and it needs **Admin approval** |
+
+Findings are deduplicated per asset: a re-scan updates in place, and a finding
+someone marked fixed that reappears is reopened. Evidence is redacted (secret-ish
+keys, response bodies, extracted values) and size-capped before storage, so
+secrets never land in the database. CVE references a tool reports are kept;
+version→CVE matching and EPSS/KEV scoring arrive in Phase 3.5.
+
+**On nmap and nuclei (CLAUDE.md rule 4).** nmap's licence (NPSL) treats
+output-parsing wrappers as derivative works, so Network uses naabu (MIT) +
+fingerprintx (Apache-2.0) instead; swap in nmap later if you hold a licence for
+it. nuclei is not run in Phase 3: even its non-exploit template folders contain
+templates that send crafted requests or reach cloud-metadata endpoints, which is
+more than "identify", so Web uses a small, auditable set of native checks.
 
 ## Scope Authorization Gate
 

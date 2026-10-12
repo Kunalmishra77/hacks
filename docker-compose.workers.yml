@@ -34,6 +34,47 @@ services:
     mem_limit: 1g
     cpus: 1.0
 
+  tls:
+    <<: *sandbox
+    build:
+      context: .
+      dockerfile: workers/tls/Dockerfile
+    image: aegis/worker-tls:latest
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in workers.env}
+      REDIS_URL: ${REDIS_URL:?set REDIS_URL in workers.env}
+      TLS_CONCURRENCY: ${TLS_CONCURRENCY:-1}
+    mem_limit: 1g
+    cpus: 1.0
+
+  web:
+    <<: *sandbox
+    build:
+      context: .
+      dockerfile: workers/web/Dockerfile
+    image: aegis/worker-web:latest
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in workers.env}
+      REDIS_URL: ${REDIS_URL:?set REDIS_URL in workers.env}
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+    mem_limit: 768m
+    cpus: 1.0
+
+  # NETWORK runs Admin-approved port scans. Keep its scale low and its egress
+  # filter strict (see docs/DEPLOY_VPS.md).
+  network:
+    <<: *sandbox
+    build:
+      context: .
+      dockerfile: workers/network/Dockerfile
+    image: aegis/worker-network:latest
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in workers.env}
+      REDIS_URL: ${REDIS_URL:?set REDIS_URL in workers.env}
+      NETWORK_CONCURRENCY: ${NETWORK_CONCURRENCY:-1}
+    mem_limit: 1g
+    cpus: 1.0
+
 networks:
   workers:
     driver: bridge

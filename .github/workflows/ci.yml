@@ -73,17 +73,19 @@ jobs:
       - name: Test
         run: npm test
 
-  # The worker image must build and contain working, flag-compatible tools.
+  # Each worker image must build, run as non-root, and contain working,
+  # flag-compatible tools (the Dockerfiles assert the flags we depend on).
   worker-image:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        worker: [discovery, tls, web, network]
     steps:
       - uses: actions/checkout@v4
-      - name: Build discovery worker image
-        run: docker build -f workers/discovery/Dockerfile -t aegis/worker-discovery:ci .
-      - name: Image runs as non-root and has its tools
-        run: |
-          test "$(docker run --rm --entrypoint id aegis/worker-discovery:ci -u)" != "0"
-          docker run --rm --entrypoint subfinder aegis/worker-discovery:ci -version
-          docker run --rm --entrypoint httpx aegis/worker-discovery:ci -version
+      - name: Build ${{ matrix.worker }} worker image
+        run: docker build -f workers/${{ matrix.worker }}/Dockerfile -t aegis/worker-${{ matrix.worker }}:ci .
+      - name: Image runs as a non-root user
+        run: test "$(docker run --rm --entrypoint id aegis/worker-${{ matrix.worker }}:ci -u)" != "0"
 

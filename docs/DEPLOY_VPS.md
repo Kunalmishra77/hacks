@@ -4,9 +4,18 @@ Scan workers run on the VPS as sandboxed Docker containers. They connect *out*
 to Supabase (Postgres) and Redis, pull jobs from the queue, re-check the Scope
 Authorization Gate, and run their tools. They accept no inbound connections.
 
-Phase 2 ships one worker: **discovery** (passive subdomains, DNS, HTTP(S)
-liveness). The API and dashboard can keep running on your PC for now; they share
-the same Supabase and Redis.
+There are four workers, one container each, all defined in
+`docker-compose.workers.yml`:
+
+- **discovery** — passive subdomains, DNS, HTTP(S) liveness
+- **tls** — testssl.sh protocol/cipher/certificate checks
+- **web** — security headers, cookie flags, exposed-file probes (no external tools)
+- **network** — naabu + fingerprintx port/service scan (Admin-approved scans only)
+
+The API and dashboard can keep running on your PC for now; they share the same
+Supabase and Redis. The egress filter in step 4 matters more now: the network
+worker makes real TCP connections to many ports, so the firewall is what keeps it
+off the VPS's own network and the cloud metadata endpoint.
 
 ## 1. Server
 
@@ -78,16 +87,21 @@ If the VPS has IPv6, add the equivalent `ip6tables` rules for `fc00::/7`,
 
 ## 5. Build and run
 
+Building the four images takes a few minutes the first time (the network image
+compiles fingerprintx from source).
+
 ```bash
 docker compose -f docker-compose.workers.yml --env-file workers.env up -d --build
-docker compose -f docker-compose.workers.yml logs -f discovery
+docker compose -f docker-compose.workers.yml logs -f
 ```
 
-You should see `{"msg":"listening","queue":"aegis-scan-discovery"}`. If you see
-`required tool missing`, the image build is broken; rebuild with `--no-cache`.
+Each worker should log `{"msg":"listening","queue":"aegis-scan-<engine>"}`. If one
+logs `required tool missing`, that image's build is broken; rebuild it with
+`--no-cache`. Run only some engines with, e.g.,
+`... up -d --build discovery web` (leave `network` off until you want port scans).
 
-The container runs as a non-root user, with a read-only filesystem, no Linux
-capabilities, `no-new-privileges`, 1 CPU, 1 GB RAM and 256 processes max.
+Each container runs as a non-root user, with a read-only filesystem, no Linux
+capabilities, `no-new-privileges`, resource limits, and 256 processes max.
 
 ## 6. Try it
 
@@ -95,10 +109,13 @@ capabilities, `no-new-privileges`, 1 CPU, 1 GB RAM and 256 processes max.
    then run `npm run dev:api` and `npm run dev:web`.
 2. Sign in at http://localhost:3000, add **a domain you own** under
    Ownership, add the DNS TXT record it shows, and click **Check DNS record**.
-3. On Assets, click **Find assets**. The worker picks the job up within a few
-   seconds; the list fills in when it finishes.
-4. **Stop all scans** in the header stops it: queued jobs are dropped, and a
-   running job stops at its next heartbeat (15 s).
+3. On Assets, click **Find assets**. The discovery worker picks the job up
+   within a few seconds; the list fills in when it finishes.
+4. On any asset, click **Web**, **TLS** or **Ports** to run a check. Results
+   appear in the **Findings** tab, worst first, with how to fix each one.
+   (A **Ports** scan waits for an Admin to approve it on the Scans tab.)
+5. **Stop all scans** in the header stops everything: queued jobs are dropped,
+   and a running job stops at its next heartbeat (15 s).
 
 ## Updating
 
