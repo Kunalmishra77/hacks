@@ -2,15 +2,29 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, ApiError, logout, refreshSession, type Asset, type OrgSummary, type Scan, type Scope } from "@/lib/api";
-import { AssetsView, KillSwitch, ScansView, ScopesView } from "./views";
+import {
+  api,
+  ApiError,
+  logout,
+  refreshSession,
+  type Asset,
+  type Finding,
+  type OrgSummary,
+  type Scan,
+  type Scope,
+  type SeveritySummary,
+} from "@/lib/api";
+import { AssetsView, FindingsView, KillSwitch, ScansView, ScopesView } from "./views";
 
-type Tab = "assets" | "scopes" | "scans";
+type Tab = "assets" | "findings" | "scopes" | "scans";
 const TABS: { id: Tab; label: string }[] = [
   { id: "assets", label: "Assets" },
+  { id: "findings", label: "Findings" },
   { id: "scopes", label: "Ownership" },
   { id: "scans", label: "Scans" },
 ];
+
+const EMPTY_SUMMARY: SeveritySummary = { INFO: 0, LOW: 0, MEDIUM: 0, HIGH: 0, CRITICAL: 0 };
 
 const ACTIVE = new Set(["QUEUED", "RUNNING", "PENDING_APPROVAL"]);
 
@@ -23,6 +37,8 @@ export default function Dashboard() {
   const [scopes, setScopes] = useState<Scope[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [scans, setScans] = useState<Scan[]>([]);
+  const [findings, setFindings] = useState<Finding[]>([]);
+  const [summary, setSummary] = useState<SeveritySummary>(EMPTY_SUMMARY);
   const [notice, setNotice] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
 
   const org = useMemo(() => orgs?.find((o) => o.id === orgId) ?? null, [orgs, orgId]);
@@ -43,16 +59,19 @@ export default function Dashboard() {
   const reload = useCallback(async () => {
     if (!orgId) return;
     try {
-      const [o, sc, as, sn] = await Promise.all([
+      const [o, sc, as, sn, fn] = await Promise.all([
         api<{ org: { killSwitchEngaged: boolean } }>(`/orgs/${orgId}`),
         api<{ scopes: Scope[] }>(`/orgs/${orgId}/scopes`),
         api<{ assets: Asset[] }>(`/orgs/${orgId}/assets`),
         api<{ scans: Scan[] }>(`/orgs/${orgId}/scans`),
+        api<{ findings: Finding[]; summary: SeveritySummary }>(`/orgs/${orgId}/findings`),
       ]);
       setKillSwitch(o.org.killSwitchEngaged);
       setScopes(sc.scopes);
       setAssets(as.assets);
       setScans(sn.scans);
+      setFindings(fn.findings);
+      setSummary(fn.summary);
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) router.replace("/login");
     }
@@ -118,6 +137,9 @@ export default function Dashboard() {
                 className={`rounded px-3 py-1.5 text-sm font-medium ${tab === t.id ? "bg-ink text-sheet" : "text-muted hover:text-ink"}`}
               >
                 {t.label}
+                {t.id === "findings" && summary.HIGH + summary.CRITICAL > 0 && (
+                  <span className="ml-1.5 rounded-full bg-stop px-1.5 text-xs font-semibold text-sheet">{summary.HIGH + summary.CRITICAL}</span>
+                )}
               </button>
             ))}
           </nav>
@@ -157,7 +179,10 @@ export default function Dashboard() {
       )}
 
       <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
-        {tab === "assets" && <AssetsView org={org} scopes={scopes} assets={assets} scans={scans} killSwitch={killSwitch} act={act} onGoToScopes={() => setTab("scopes")} />}
+        {tab === "assets" && (
+          <AssetsView org={org} scopes={scopes} assets={assets} scans={scans} killSwitch={killSwitch} findings={findings} act={act} onGoToScopes={() => setTab("scopes")} />
+        )}
+        {tab === "findings" && <FindingsView org={org} findings={findings} summary={summary} act={act} />}
         {tab === "scopes" && <ScopesView org={org} scopes={scopes} act={act} />}
         {tab === "scans" && <ScansView org={org} scans={scans} assets={assets} act={act} />}
       </main>

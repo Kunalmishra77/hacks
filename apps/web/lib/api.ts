@@ -109,9 +109,33 @@ export interface Scan {
   createdAt: string;
 }
 
+export type Severity = "INFO" | "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+export type FindingStatus = "OPEN" | "TRIAGED" | "FIXED" | "FALSE_POSITIVE";
+
+export interface Finding {
+  id: string;
+  assetId: string;
+  assetAddress: string;
+  assetKind: Asset["kind"];
+  scopeId: string;
+  type: string;
+  severity: Severity;
+  cvss: number | null;
+  cveRefs: string[];
+  title: string;
+  evidence: Record<string, unknown> | null;
+  remediation: string | null;
+  status: FindingStatus;
+  firstSeenAt: string;
+  lastSeenAt: string;
+}
+
+export type SeveritySummary = Record<Severity, number>;
+
 export const can = {
   manageScopes: (r: Role) => r === "OWNER" || r === "ADMIN",
   runScans: (r: Role) => r !== "VIEWER",
   approve: (r: Role) => r === "OWNER" || r === "ADMIN",
+  triage: (r: Role) => r !== "VIEWER",
   releaseKillSwitch: (r: Role) => r === "OWNER" || r === "ADMIN",
 };

@@ -1,7 +1,19 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
-import { api, can, type Asset, type OrgSummary, type Role, type Scan, type Scope } from "@/lib/api";
+import {
+  api,
+  can,
+  type Asset,
+  type Finding,
+  type FindingStatus,
+  type OrgSummary,
+  type Role,
+  type Scan,
+  type Scope,
+  type Severity,
+  type SeveritySummary,
+} from "@/lib/api";
 
 type Act = (fn: () => Promise<unknown>, ok: string) => Promise<void>;
 
@@ -117,12 +129,23 @@ function AssetDetail({ a }: { a: Asset }) {
   );
 }
 
+/** Which assessment engines make sense to run against a given asset kind. */
+const ASSET_ENGINES: Record<Asset["kind"], ("WEB" | "TLS" | "NETWORK")[]> = {
+  DOMAIN: ["WEB", "TLS", "NETWORK"],
+  SUBDOMAIN: ["WEB", "TLS", "NETWORK"],
+  IP: ["NETWORK", "WEB", "TLS"],
+  SERVICE: ["WEB", "TLS", "NETWORK"],
+  CLOUD_RESOURCE: [],
+};
+const CHECK_LABEL: Record<"WEB" | "TLS" | "NETWORK", string> = { WEB: "Web", TLS: "TLS", NETWORK: "Ports" };
+
 export function AssetsView({
   org,
   scopes,
   assets,
   scans,
   killSwitch,
+  findings,
   act,
   onGoToScopes,
 }: {
@@ -131,9 +154,14 @@ export function AssetsView({
   assets: Asset[];
   scans: Scan[];
   killSwitch: boolean;
+  findings: Finding[];
   act: Act;
   onGoToScopes: () => void;
 }) {
+  const openByAsset = new Map<string, number>();
+  for (const f of findings) {
+    if (f.status === "OPEN" || f.status === "TRIAGED") openByAsset.set(f.assetId, (openByAsset.get(f.assetId) ?? 0) + 1);
+  }
   const live = scopes.filter((s) => s.status !== "REVOKED");
   if (live.length === 0) {
     return (
@@ -192,7 +220,8 @@ export function AssetsView({
                       <th className="py-2 pr-4 font-medium">Address</th>
                       <th className="hidden py-2 pr-4 font-medium sm:table-cell">Type</th>
                       <th className="hidden py-2 pr-4 font-medium sm:table-cell">What we saw</th>
-                      <th className="hidden py-2 font-medium md:table-cell">Last seen</th>
+                      <th className="py-2 pr-4 font-medium">Findings</th>
+                      <th className="py-2 font-medium" />
                     </tr>
                   </thead>
                   <tbody>
@@ -209,7 +238,41 @@ export function AssetsView({
                         <td className="hidden py-2 pr-4 sm:table-cell">
                           <AssetDetail a={a} />
                         </td>
-                        <td className="hidden py-2 whitespace-nowrap text-muted md:table-cell">{fmtDate(a.lastSeen)}</td>
+                        <td className="py-2 pr-4 whitespace-nowrap">
+                          {openByAsset.get(a.id) ? (
+                            <span className="font-medium">{openByAsset.get(a.id)} open</span>
+                          ) : (
+                            <span className="text-muted">—</span>
+                          )}
+                        </td>
+                        <td className="py-2 text-right">
+                          <span className="flex flex-wrap justify-end gap-1">
+                          {ASSET_ENGINES[a.kind]
+                            .filter((e) => scope.allowedEngines.includes(e))
+                            .map((engine) => {
+                              const running = scans.some((s) => s.assetId === a.id && s.engine === engine && (s.status === "QUEUED" || s.status === "RUNNING" || s.status === "PENDING_APPROVAL"));
+                              const disabled = scope.status !== "VERIFIED" || !can.runScans(org.role) || killSwitch || running;
+                              return (
+                                <button
+                                  key={engine}
+                                  disabled={disabled}
+                                  onClick={() =>
+                                    act(
+                                      () => api(`/orgs/${org.id}/scans`, { method: "POST", body: { assetId: a.id, engine } }),
+                                      engine === "NETWORK"
+                                        ? `Port scan needs an admin's approval; it's waiting in Scans.`
+                                        : `${CHECK_LABEL[engine]} check queued for ${a.address}.`,
+                                    )
+                                  }
+                                  className="rounded border border-line px-2 py-1 text-xs font-medium hover:border-ink/50 disabled:opacity-40"
+                                  title={scope.status !== "VERIFIED" ? "Prove ownership first" : running ? "Already running" : `Run ${CHECK_LABEL[engine]} check`}
+                                >
+                                  {running ? `${CHECK_LABEL[engine]}…` : CHECK_LABEL[engine]}
+                                </button>
+                              );
+                            })}
+                          </span>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -472,6 +535,147 @@ export function ScansView({ org, scans, assets, act }: { org: OrgSummary; scans:
           </tbody>
         </table>
       </div>
+    </section>
+  );
+}
+
+// ── Findings ───────────────────────────────────────────────────────
+
+const SEVERITY_META: Record<Severity, { label: string; chip: string; order: number }> = {
+  CRITICAL: { label: "Critical", chip: "bg-stop text-sheet", order: 4 },
+  HIGH: { label: "High", chip: "bg-stop/15 text-stop", order: 3 },
+  MEDIUM: { label: "Medium", chip: "bg-wait/15 text-wait", order: 2 },
+  LOW: { label: "Low", chip: "bg-line text-ink", order: 1 },
+  INFO: { label: "Info", chip: "bg-line/60 text-muted", order: 0 },
+};
+const FINDING_STATUS: Record<FindingStatus, string> = {
+  OPEN: "Open",
+  TRIAGED: "Triaged",
+  FIXED: "Fixed",
+  FALSE_POSITIVE: "Not a problem",
+};
+const SEVERITY_ORDER: Severity[] = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"];
+
+function EvidenceList({ evidence }: { evidence: Record<string, unknown> | null }) {
+  if (!evidence) return null;
+  const entries = Object.entries(evidence).filter(([, v]) => v !== null && v !== undefined && v !== "");
+  if (entries.length === 0) return null;
+  return (
+    <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+      {entries.map(([k, v]) => (
+        <div key={k} className="contents">
+          <dt className="text-muted">{k}</dt>
+          <dd className="font-mono [overflow-wrap:anywhere]">{typeof v === "object" ? JSON.stringify(v) : String(v)}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+export function FindingsView({
+  org,
+  findings,
+  summary,
+  act,
+}: {
+  org: OrgSummary;
+  findings: Finding[];
+  summary: SeveritySummary;
+  act: Act;
+}) {
+  const [open, setOpen] = useState<string | null>(null);
+  const [hideResolved, setHideResolved] = useState(true);
+  const shown = findings
+    .filter((f) => !hideResolved || (f.status !== "FIXED" && f.status !== "FALSE_POSITIVE"))
+    .sort((a, b) => SEVERITY_META[b.severity].order - SEVERITY_META[a.severity].order);
+  const total = SEVERITY_ORDER.reduce((n, s) => n + summary[s], 0);
+
+  if (findings.length === 0) {
+    return (
+      <section className="max-w-xl">
+        <h1 className="text-2xl font-semibold tracking-tight">No findings yet</h1>
+        <p className="mt-3 text-muted">
+          Run a TLS, Web or Ports check on an asset (Assets tab). What each check sees shows up here, worst first, with how to
+          fix it.
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <section>
+      <div className="flex flex-wrap items-baseline justify-between gap-4">
+        <h1 className="text-2xl font-semibold tracking-tight">Findings</h1>
+        <label className="flex items-center gap-2 text-sm text-muted">
+          <input type="checkbox" checked={hideResolved} onChange={(e) => setHideResolved(e.target.checked)} />
+          Hide fixed and dismissed
+        </label>
+      </div>
+
+      {total > 0 && (
+        <div className="mt-4 flex flex-wrap gap-2">
+          {SEVERITY_ORDER.filter((s) => summary[s] > 0).map((s) => (
+            <span key={s} className={`rounded px-2 py-1 text-sm font-medium ${SEVERITY_META[s].chip}`}>
+              {summary[s]} {SEVERITY_META[s].label.toLowerCase()}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <ul className="mt-6 flex flex-col divide-y divide-line border-y border-line">
+        {shown.map((f) => {
+          const meta = SEVERITY_META[f.severity];
+          const expanded = open === f.id;
+          const resolved = f.status === "FIXED" || f.status === "FALSE_POSITIVE";
+          return (
+            <li key={f.id} className={resolved ? "opacity-60" : ""}>
+              <button
+                onClick={() => setOpen(expanded ? null : f.id)}
+                aria-expanded={expanded}
+                className="flex w-full items-baseline gap-3 py-3 text-left"
+              >
+                <span className={`w-16 shrink-0 rounded px-1.5 py-0.5 text-center text-xs font-semibold ${meta.chip}`}>{meta.label}</span>
+                <span className="flex-1">
+                  <span className="font-medium">{f.title}</span>
+                  <span className="ml-2 font-mono text-[13px] text-muted [overflow-wrap:anywhere]">{f.assetAddress}</span>
+                </span>
+                {f.status !== "OPEN" && <span className="shrink-0 text-xs text-muted">{FINDING_STATUS[f.status]}</span>}
+              </button>
+              {expanded && (
+                <div className="pb-4 pl-[4.75rem] text-sm">
+                  {f.remediation && <p className="max-w-2xl">{f.remediation}</p>}
+                  {f.cveRefs.length > 0 && (
+                    <p className="mt-2 text-muted">
+                      {f.cveRefs.join(", ")}
+                      {f.cvss !== null && ` · CVSS ${f.cvss}`}
+                    </p>
+                  )}
+                  <EvidenceList evidence={f.evidence} />
+                  <p className="mt-2 text-xs text-muted">
+                    First seen {fmtDate(f.firstSeenAt)} · last seen {fmtDate(f.lastSeenAt)}
+                  </p>
+                  {can.triage(org.role) && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {(["TRIAGED", "FIXED", "FALSE_POSITIVE", "OPEN"] as FindingStatus[])
+                        .filter((st) => st !== f.status)
+                        .map((st) => (
+                          <button
+                            key={st}
+                            onClick={() => act(() => api(`/orgs/${org.id}/findings/${f.id}/status`, { method: "POST", body: { status: st } }), `Marked "${f.title}" ${FINDING_STATUS[st].toLowerCase()}.`)}
+                            className={btnQuiet}
+                          >
+                            Mark {FINDING_STATUS[st].toLowerCase()}
+                          </button>
+                        ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {shown.length === 0 && <p className="mt-6 text-muted">Everything&apos;s been resolved. Uncheck the filter to see fixed items.</p>}
     </section>
   );
 }
