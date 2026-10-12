@@ -1,5 +1,19 @@
 import { createPrismaGateRepository, Prisma, type PrismaClient } from "@aegis/db";
-import type { AssetKind, AuditEvent, AuditSink, GateRepository } from "@aegis/core";
+import type { AssetKind, AuditEvent, AuditSink, GateRepository, Severity } from "@aegis/core";
+
+export interface FindingUpsert {
+  assetId: string;
+  scanId: string;
+  fingerprint: string;
+  type: string;
+  severity: Severity;
+  title: string;
+  remediation: string;
+  evidence: Record<string, unknown> | null;
+  cveRefs: string[];
+  cvss: number | null;
+  at: Date;
+}
 
 /** What a worker may read and write. Deliberately small. */
 export interface WorkerStore {
@@ -20,6 +34,12 @@ export interface WorkerStore {
     scanId: string;
     at: Date;
   }): Promise<{ id: string; created: boolean }>;
+  /**
+   * Creates a finding or refreshes an existing one (same asset + fingerprint).
+   * A finding someone marked FIXED that shows up again is reopened; one marked
+   * FALSE_POSITIVE keeps that status.
+   */
+  upsertFinding(f: FindingUpsert): Promise<"created" | "updated" | "reopened">;
 }
 
 export function createPrismaWorkerStore(prisma: PrismaClient): WorkerStore {
@@ -65,6 +85,40 @@ export function createPrismaWorkerStore(prisma: PrismaClient): WorkerStore {
         },
       });
       return r.count === 1;
+    },
+    async upsertFinding(f) {
+      const evidence = f.evidence === null ? Prisma.JsonNull : (f.evidence as Prisma.InputJsonObject);
+      const existing = await prisma.finding.findUnique({
+        where: { assetId_fingerprint: { assetId: f.assetId, fingerprint: f.fingerprint } },
+        select: { id: true, status: true },
+      });
+      const fields = {
+        type: f.type,
+        severity: f.severity,
+        title: f.title,
+        remediation: f.remediation,
+        evidence,
+        cveRefs: f.cveRefs,
+        cvss: f.cvss,
+        lastSeenAt: f.at,
+        lastScanId: f.scanId,
+      };
+      if (!existing) {
+        try {
+          await prisma.finding.create({
+            data: { ...fields, assetId: f.assetId, scanId: f.scanId, fingerprint: f.fingerprint, firstSeenAt: f.at },
+          });
+          return "created";
+        } catch (e) {
+          if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002")) throw e;
+        }
+      }
+      const reopened = existing?.status === "FIXED";
+      await prisma.finding.update({
+        where: { assetId_fingerprint: { assetId: f.assetId, fingerprint: f.fingerprint } },
+        data: { ...fields, ...(reopened ? { status: "OPEN" as const } : {}) },
+      });
+      return reopened ? "reopened" : "updated";
     },
     async upsertAsset({ scopeId, kind, address, metadata, scanId, at }) {
       const meta = metadata === null ? Prisma.JsonNull : (metadata as Prisma.InputJsonObject);

@@ -1,7 +1,6 @@
 import { prisma } from "@aegis/db";
-import { runTool, startEngineWorker } from "@aegis/worker-kit";
+import { createPublicResolver, runTool, startEngineWorker } from "@aegis/worker-kit";
 import { fetchCrtSh } from "./crtsh.js";
-import { createPublicResolver } from "./dns.js";
 import { createDiscoveryEngine } from "./engine.js";
 import { runHttpx } from "./httpx.js";
 import { runSubfinder } from "./subfinder.js";

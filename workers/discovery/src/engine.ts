@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { isPublicAddress, isWithinDomain, normalizeDomain } from "@aegis/core";
 import type { EngineContext, EngineImpl } from "@aegis/worker-kit";
-import type { ResolveResult } from "./dns.js";
+import type { ResolveResult } from "@aegis/worker-kit";
 import type { HttpxResult } from "./httpx.js";
 
 /**

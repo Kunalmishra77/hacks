@@ -2,6 +2,9 @@ import { z } from "zod";
 import {
   createAuditLogger,
   ENGINES,
+  findingFingerprint,
+  sanitizeEvidence,
+  type FindingDraft,
   isWithinDomain,
   normalizeDomain,
   targetInScope,
@@ -33,8 +36,13 @@ export interface EngineContext {
   target: AuthorizedTarget;
   /** Aborted on kill-switch, scan kill, scope revocation/expiry, or timeout. */
   signal: AbortSignal;
-  /** Records an asset if it is inside the scope. Returns false if dropped. */
-  emitAsset(asset: EmittedAsset): Promise<boolean>;
+  /** Records an asset if it is inside the scope. Returns its id, or null if dropped. */
+  emitAsset(asset: EmittedAsset): Promise<string | null>;
+  /**
+   * Records a finding on the target asset or on an asset this job emitted.
+   * Evidence is sanitized; repeats update the existing finding. False if dropped.
+   */
+  emitFinding(finding: FindingDraft): Promise<boolean>;
   log(msg: string, data?: Record<string, unknown>): void;
 }
 
@@ -45,7 +53,14 @@ export interface EngineImpl {
 
 export type JobOutcome =
   | { status: "REFUSED"; reason: ScanRejectReason | "INVALID_PAYLOAD" | "WRONG_ENGINE" | "NOT_RUNNABLE" }
-  | { status: "SUCCEEDED"; assetsCreated: number; assetsUpdated: number; dropped: number }
+  | {
+      status: "SUCCEEDED";
+      assetsCreated: number;
+      assetsUpdated: number;
+      dropped: number;
+      findingsCreated: number;
+      findingsUpdated: number;
+    }
   | { status: "FAILED"; error: string }
   | { status: "KILLED"; reason: ScanRejectReason };
 
@@ -153,19 +168,24 @@ export async function runScanJob(rawPayload: unknown, deps: RunJobDeps): Promise
   let created = 0;
   let updated = 0;
   let dropped = 0;
+  let findingsCreated = 0;
+  let findingsUpdated = 0;
+  // Findings may only attach to the target or to assets this job produced.
+  const ownAssets = new Set<string>([target.assetId]);
+  const seenFingerprints = new Set<string>();
   const scope = { type: target.scopeType, value: target.scopeValue };
   const ctx: EngineContext = {
     target,
     signal: controller.signal,
     log,
     async emitAsset(asset) {
-      if (controller.signal.aborted) return false;
+      if (controller.signal.aborted) return null;
       const address = normalizeAddress(asset.kind, asset.address);
       const inScope = !!address && targetInScope(scope, { kind: asset.kind, address });
       // Domain scopes: discovery may only add names under the apex.
       if (!address || !inScope || (scope.type === "DOMAIN" && asset.kind === "SUBDOMAIN" && !isWithinDomain(address, target.scopeValue))) {
         dropped++;
-        return false;
+        return null;
       }
       const r = await deps.store.upsertAsset({
         scopeId: target.scopeId,
@@ -177,6 +197,34 @@ export async function runScanJob(rawPayload: unknown, deps: RunJobDeps): Promise
       });
       if (r.created) created++;
       else updated++;
+      ownAssets.add(r.id);
+      return r.id;
+    },
+    async emitFinding(f) {
+      if (controller.signal.aborted) return false;
+      const assetId = f.assetId ?? target.assetId;
+      if (!ownAssets.has(assetId)) {
+        dropped++;
+        return false;
+      }
+      const fingerprint = findingFingerprint(target.engine, f.type, f.key);
+      const r = await deps.store.upsertFinding({
+        assetId,
+        scanId: job.scanId,
+        fingerprint,
+        type: f.type,
+        severity: f.severity,
+        title: f.title.slice(0, 300),
+        remediation: f.remediation.slice(0, 2000),
+        evidence: sanitizeEvidence(f.evidence),
+        cveRefs: (f.cveRefs ?? []).filter((c) => /^CVE-\d{4}-\d{4,}$/.test(c)).slice(0, 50),
+        cvss: typeof f.cvss === "number" && f.cvss >= 0 && f.cvss <= 10 ? f.cvss : null,
+        at: now(),
+      });
+      const key = `${assetId}|${fingerprint}`;
+      if (r === "created" && !seenFingerprints.has(key)) findingsCreated++;
+      else findingsUpdated++;
+      seenFingerprints.add(key);
       return true;
     },
   };
@@ -185,7 +233,7 @@ export async function runScanJob(rawPayload: unknown, deps: RunJobDeps): Promise
   try {
     await deps.engine.run(ctx);
     if (controller.signal.aborted) throw controller.signal.reason;
-    outcome = { status: "SUCCEEDED", assetsCreated: created, assetsUpdated: updated, dropped };
+    outcome = { status: "SUCCEEDED", assetsCreated: created, assetsUpdated: updated, dropped, findingsCreated, findingsUpdated };
   } catch (e) {
     const stopErr = controller.signal.aborted && controller.signal.reason instanceof StopError ? controller.signal.reason : null;
     if (stopErr && stopErr.reason !== "TIMEOUT" && KILL_REASONS.has(stopErr.reason)) {
@@ -208,7 +256,7 @@ export async function runScanJob(rawPayload: unknown, deps: RunJobDeps): Promise
     orgId: target.orgId,
     scopeId: target.scopeId,
     scanId: job.scanId,
-    payload: { engine: target.engine, assetsCreated: created, assetsUpdated: updated, dropped, ...outcome },
+    payload: { engine: target.engine, assetsCreated: created, assetsUpdated: updated, dropped, findingsCreated, findingsUpdated, ...outcome },
   });
   return outcome;
 }

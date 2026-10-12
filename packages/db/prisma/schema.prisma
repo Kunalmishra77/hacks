@@ -299,26 +299,33 @@ model Scan {
 
 model Finding {
   id          String        @id @default(uuid()) @db.Uuid
+  // Scan that first reported it; lastScanId is the most recent one.
   scanId      String        @db.Uuid
+  lastScanId  String?       @db.Uuid
   assetId     String        @db.Uuid
   type        String
   severity    Severity
   cvss        Float?
   cveRefs     String[]
   title       String
+  // Small, structured, redacted facts (never raw response bodies).
+  evidence    Json?
   evidenceUrl String?
   remediation String?
   status      FindingStatus @default(OPEN)
-  // Stable hash of (asset, type, key evidence) used for dedupe in Phase 5.
-  fingerprint String?
+  // Stable hash of (asset, engine, type, key) so re-scans update instead of duplicating.
+  fingerprint String
+  firstSeenAt DateTime      @default(now())
+  lastSeenAt  DateTime      @default(now())
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
 
   scan  Scan  @relation(fields: [scanId], references: [id], onDelete: Cascade)
   asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
 
+  @@unique([assetId, fingerprint])
   @@index([assetId, status])
-  @@index([fingerprint])
+  @@index([severity, status])
 }
 
 model Report {

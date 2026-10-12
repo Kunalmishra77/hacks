@@ -26,6 +26,9 @@ function ctxFor(target: AuthorizedTarget, signal = new AbortController().signal)
     log: () => {},
     async emitAsset(a) {
       emitted.push(a);
+      return `asset-${emitted.length}`;
+    },
+    async emitFinding() {
       return true;
     },
   };

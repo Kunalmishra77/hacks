@@ -21,6 +21,9 @@ COPY packages/worker-kit/package.json packages/worker-kit/
 COPY apps/api/package.json apps/api/
 COPY apps/web/package.json apps/web/
 COPY workers/discovery/package.json workers/discovery/
+COPY workers/web/package.json workers/web/
+COPY workers/tls/package.json workers/tls/
+COPY workers/network/package.json workers/network/
 RUN npm ci --ignore-scripts --no-audit --no-fund \
       --workspace @aegis/worker-discovery --include-workspace-root
 COPY packages/db/prisma packages/db/prisma
