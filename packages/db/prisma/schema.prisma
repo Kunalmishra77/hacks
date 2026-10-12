@@ -82,6 +82,12 @@ enum Severity {
   CRITICAL
 }
 
+enum Criticality {
+  LOW
+  MEDIUM
+  HIGH
+}
+
 enum FindingStatus {
   OPEN
   TRIAGED
@@ -227,6 +233,8 @@ model Scope {
   allowedEngines        Engine[]
   // Per-scope rate limit (requests/sec against targets in this scope).
   maxRequestsPerSec     Int                 @default(5)
+  // How much this boundary matters; scales its findings' risk scores.
+  criticality           Criticality         @default(MEDIUM)
   // CLOUD_ACCOUNT only: customer role we assume, and the platform-generated
   // external ID that prevents confused-deputy use of that role.
   cloudRoleArn          String?
@@ -315,6 +323,12 @@ model Finding {
   status      FindingStatus @default(OPEN)
   // Stable hash of (asset, engine, type, key) so re-scans update instead of duplicating.
   fingerprint String
+  // Phase 3.5 enrichment (advisory): EPSS probability, CISA KEV flag, and the
+  // combined risk score (CVSS x EPSS x asset-criticality, KEV-escalated).
+  epss        Float?
+  kevListed   Boolean       @default(false)
+  riskScore   Int?
+  enrichedAt  DateTime?
   firstSeenAt DateTime      @default(now())
   lastSeenAt  DateTime      @default(now())
   createdAt   DateTime      @default(now())
