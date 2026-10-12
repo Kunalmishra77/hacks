@@ -345,16 +345,23 @@ model Finding {
 model Report {
   id          String       @id @default(uuid()) @db.Uuid
   orgId       String       @db.Uuid
-  scopeId     String?      @db.Uuid
-  format      ReportFormat
-  storageUrl  String
+  scopeId     String?      @db.Uuid // null = whole organization
+  title       String
+  format      ReportFormat @default(HTML)
+  // Point-in-time snapshot: severity/risk counts, so lists render without the body.
+  summary     Json
+  // Rendered report. Held here when no object storage is configured;
+  // storageUrl points at S3/Supabase Storage when it is.
+  content     String?
+  byteSize    Int          @default(0)
+  storageUrl  String?
   createdById String       @db.Uuid
   createdAt   DateTime     @default(now())
 
   org   Org    @relation(fields: [orgId], references: [id], onDelete: Cascade)
   scope Scope? @relation(fields: [scopeId], references: [id], onDelete: SetNull)
 
-  @@index([orgId])
+  @@index([orgId, createdAt])
 }
 
 model ScanSchedule {
