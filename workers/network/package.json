@@ -1,0 +1,20 @@
+{
+  "name": "@aegis/worker-network",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./engine": "./src/engine.ts"
+  },
+  "scripts": {
+    "dev": "dotenv -e ../../.env -- tsx src/main.ts",
+    "start": "tsx src/main.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@aegis/core": "*",
+    "@aegis/db": "*",
+    "@aegis/worker-kit": "*"
+  }
+}
