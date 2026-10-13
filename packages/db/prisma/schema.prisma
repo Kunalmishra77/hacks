@@ -337,6 +337,10 @@ model Finding {
   kevListed   Boolean       @default(false)
   riskScore   Int?
   enrichedAt  DateTime?
+  // Phase 7 AI advisory (advisory only; findings of record still come from engines).
+  aiAdvice    Json?
+  aiAdviceAt  DateTime?
+  aiModel     String?
   firstSeenAt DateTime      @default(now())
   lastSeenAt  DateTime      @default(now())
   createdAt   DateTime      @default(now())
