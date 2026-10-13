@@ -44,6 +44,8 @@ export interface WorkerStore {
   findingsForScan(scanId: string): Promise<EnrichableFinding[]>;
   /** Writes enrichment (EPSS, KEV, risk, escalated severity) onto a finding. */
   applyEnrichment(id: string, e: FindingEnrichment): Promise<void>;
+  /** The customer's read-only cloud role for a CLOUD_ACCOUNT scope (Phase 4). */
+  cloudRole(scopeId: string): Promise<{ roleArn: string; externalId: string } | null>;
 }
 
 export interface EnrichableFinding {
@@ -138,6 +140,10 @@ export function createPrismaWorkerStore(prisma: PrismaClient): WorkerStore {
         data: { ...fields, ...(reopened ? { status: "OPEN" as const } : {}) },
       });
       return reopened ? "reopened" : "updated";
+    },
+    async cloudRole(scopeId) {
+      const s = await prisma.scope.findUnique({ where: { id: scopeId }, select: { cloudRoleArn: true, externalId: true } });
+      return s?.cloudRoleArn && s.externalId ? { roleArn: s.cloudRoleArn, externalId: s.externalId } : null;
     },
     async findingsForScan(scanId) {
       const rows = await prisma.finding.findMany({

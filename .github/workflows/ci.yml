@@ -102,7 +102,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        worker: [discovery, tls, web, network]
+        worker: [discovery, tls, web, network, cloud]
     steps:
       - uses: actions/checkout@v4
       - name: Build ${{ matrix.worker }} worker image

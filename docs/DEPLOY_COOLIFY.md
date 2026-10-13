@@ -60,7 +60,7 @@ NVD/SMTP keys live), so keep the API running for monitoring to work.
 
 The workers run the scanning tools and must sit behind the egress firewall from
 [DEPLOY_VPS.md](DEPLOY_VPS.md) §4. For each of `discovery`, `tls`, `web`,
-`network`:
+`network`, `cloud`:
 
 - **Build**: Dockerfile `workers/<name>/Dockerfile`, context the repo root.
 - **No ports, no domain** (they only make outbound connections).
@@ -70,6 +70,16 @@ The workers run the scanning tools and must sit behind the egress firewall from
 Start with `discovery`, `tls` and `web`; add `network` when you want
 Admin-approved port scans. Apply the egress iptables rules on the VPS so a
 worker can't reach private networks or the cloud metadata endpoint.
+
+The `cloud` worker (Admin-approved AWS posture scans with prowler) is the one
+exception on environment: besides `DATABASE_URL` and `REDIS_URL` it needs the
+Aegis **platform** AWS credentials so it can assume each customer's read-only
+role — `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (an IAM user
+whose only permission is `sts:AssumeRole` on customer roles). It still gets no
+JWT/AI/SMTP secrets. The assumed session is capped read-only by a SecurityAudit
+session policy, so even a broad customer role can only be read. Its image is
+larger (it installs prowler) and it needs outbound HTTPS to AWS, so keep the
+egress firewall's public-internet allowance but its private/metadata block.
 
 ## 4. First run
 

@@ -82,6 +82,9 @@ function world() {
       return [];
     },
     async applyEnrichment() {},
+    async cloudRole() {
+      return null;
+    },
     async upsertAsset({ scopeId, kind, address, metadata }) {
       const existing = [...assets.values()].find((a) => a.scopeId === scopeId && a.kind === kind && a.address === address);
       if (existing) {

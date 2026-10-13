@@ -14,6 +14,12 @@ export interface ToolRunOptions {
   timeoutMs: number;
   maxOutputBytes?: number;
   signal?: AbortSignal;
+  /**
+   * Extra environment variables for this one run, merged over the minimal safe
+   * set. For passing *ephemeral, caller-chosen* secrets (e.g. assumed-role AWS
+   * credentials) to a tool — never the platform's own long-lived env.
+   */
+  extraEnv?: Record<string, string | undefined>;
 }
 
 export interface ToolRunResult {
@@ -36,6 +42,7 @@ export function runTool(opts: ToolRunOptions): Promise<ToolRunResult> {
   const max = opts.maxOutputBytes ?? 20 * 1024 * 1024;
   const env: NodeJS.ProcessEnv = {};
   for (const k of SAFE_ENV_KEYS) if (process.env[k] !== undefined) env[k] = process.env[k];
+  if (opts.extraEnv) for (const [k, v] of Object.entries(opts.extraEnv)) if (v !== undefined) env[k] = v;
 
   return new Promise((resolve, reject) => {
     if (opts.signal?.aborted) return reject(opts.signal.reason ?? new Error("aborted"));
