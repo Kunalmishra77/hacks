@@ -34,6 +34,8 @@ export type AuditAction =
   | "finding.triaged"
   | "report.create"
   | "report.shared"
+  | "schedule.create"
+  | "channel.create"
   | "scan.killed"
   | "killswitch.engaged"
   | "killswitch.released";

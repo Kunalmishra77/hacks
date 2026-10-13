@@ -7,3 +7,5 @@ export * from "./scopeGate.js";
 export * from "./jobs.js";
 export * from "./netguard.js";
 export * from "./findings.js";
+export * from "./schedule.js";
+export * from "./alert.js";
