@@ -14,14 +14,17 @@ import {
   type Scope,
   type SeveritySummary,
   type Report,
+  type Schedule,
+  type Channel,
 } from "@/lib/api";
-import { AssetsView, FindingsView, KillSwitch, ReportsView, ScansView, ScopesView } from "./views";
+import { AssetsView, FindingsView, KillSwitch, MonitoringView, ReportsView, ScansView, ScopesView } from "./views";
 
-type Tab = "assets" | "findings" | "reports" | "scopes" | "scans";
+type Tab = "assets" | "findings" | "reports" | "scopes" | "scans" | "monitoring";
 const TABS: { id: Tab; label: string }[] = [
   { id: "assets", label: "Assets" },
   { id: "findings", label: "Findings" },
   { id: "reports", label: "Reports" },
+  { id: "monitoring", label: "Monitoring" },
   { id: "scopes", label: "Ownership" },
   { id: "scans", label: "Scans" },
 ];
@@ -42,6 +45,8 @@ export default function Dashboard() {
   const [findings, setFindings] = useState<Finding[]>([]);
   const [summary, setSummary] = useState<SeveritySummary>(EMPTY_SUMMARY);
   const [reports, setReports] = useState<Report[]>([]);
+  const [schedules, setSchedules] = useState<Schedule[]>([]);
+  const [channels, setChannels] = useState<Channel[]>([]);
   const [notice, setNotice] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
 
   const org = useMemo(() => orgs?.find((o) => o.id === orgId) ?? null, [orgs, orgId]);
@@ -62,13 +67,15 @@ export default function Dashboard() {
   const reload = useCallback(async () => {
     if (!orgId) return;
     try {
-      const [o, sc, as, sn, fn, rp] = await Promise.all([
+      const [o, sc, as, sn, fn, rp, sch, ch] = await Promise.all([
         api<{ org: { killSwitchEngaged: boolean } }>(`/orgs/${orgId}`),
         api<{ scopes: Scope[] }>(`/orgs/${orgId}/scopes`),
         api<{ assets: Asset[] }>(`/orgs/${orgId}/assets`),
         api<{ scans: Scan[] }>(`/orgs/${orgId}/scans`),
         api<{ findings: Finding[]; summary: SeveritySummary }>(`/orgs/${orgId}/findings`),
         api<{ reports: Report[] }>(`/orgs/${orgId}/reports`),
+        api<{ schedules: Schedule[] }>(`/orgs/${orgId}/schedules`),
+        api<{ channels: Channel[] }>(`/orgs/${orgId}/channels`),
       ]);
       setKillSwitch(o.org.killSwitchEngaged);
       setScopes(sc.scopes);
@@ -77,6 +84,8 @@ export default function Dashboard() {
       setFindings(fn.findings);
       setSummary(fn.summary);
       setReports(rp.reports);
+      setSchedules(sch.schedules);
+      setChannels(ch.channels);
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) router.replace("/login");
     }
@@ -189,6 +198,7 @@ export default function Dashboard() {
         )}
         {tab === "findings" && <FindingsView org={org} findings={findings} summary={summary} act={act} />}
         {tab === "reports" && <ReportsView org={org} reports={reports} scopes={scopes} act={act} />}
+        {tab === "monitoring" && <MonitoringView org={org} schedules={schedules} channels={channels} scopes={scopes} act={act} />}
         {tab === "scopes" && <ScopesView org={org} scopes={scopes} act={act} />}
         {tab === "scans" && <ScansView org={org} scans={scans} assets={assets} act={act} />}
       </main>

@@ -156,11 +156,37 @@ export interface Report {
   createdAt: string;
 }
 
+export interface Schedule {
+  id: string;
+  scopeId: string;
+  cron: string;
+  engines: Engine[];
+  enabled: boolean;
+  lastRunAt: string | null;
+  nextRunAt: string | null;
+  createdAt: string;
+}
+
+export type NotificationType = "SLACK" | "WEBHOOK" | "EMAIL" | "WHATSAPP";
+export interface Channel {
+  id: string;
+  type: NotificationType;
+  name: string;
+  target: string;
+  minSeverity: Severity;
+  kevAlways: boolean;
+  enabled: boolean;
+  lastNotifiedAt: string | null;
+  lastError: string | null;
+  createdAt: string;
+}
+
 export const can = {
   manageScopes: (r: Role) => r === "OWNER" || r === "ADMIN",
   runScans: (r: Role) => r !== "VIEWER",
   approve: (r: Role) => r === "OWNER" || r === "ADMIN",
   triage: (r: Role) => r !== "VIEWER",
   createReport: (r: Role) => r !== "VIEWER",
+  manageMonitoring: (r: Role) => r === "OWNER" || r === "ADMIN",
   releaseKillSwitch: (r: Role) => r === "OWNER" || r === "ADMIN",
 };

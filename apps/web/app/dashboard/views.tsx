@@ -14,6 +14,9 @@ import {
   type Severity,
   type SeveritySummary,
   type Report,
+  type Schedule,
+  type Channel,
+  type NotificationType,
   reportObjectUrl,
 } from "@/lib/api";
 
@@ -662,6 +665,11 @@ export function FindingsView({
                 </span>
                 <span className="flex-1">
                   <span className="font-medium">{f.title}</span>
+                  {Date.now() - new Date(f.firstSeenAt).getTime() < 7 * 86400000 && (
+                    <span className="ml-2 rounded bg-boundary px-1.5 py-0.5 text-[11px] font-semibold text-sheet" title={`First seen ${fmtDate(f.firstSeenAt)}`}>
+                      New
+                    </span>
+                  )}
                   {f.kevListed && (
                     <span className="ml-2 rounded bg-stop px-1.5 py-0.5 text-[11px] font-semibold text-sheet" title="On CISA's Known Exploited Vulnerabilities list — actively exploited in the wild">
                       Exploited
@@ -812,6 +820,217 @@ export function ReportsView({ org, reports, scopes, act }: { org: OrgSummary; re
           })}
         </ul>
       )}
+    </section>
+  );
+}
+
+// ── Monitoring (schedules + alert channels) ────────────────────────
+
+const CRON_PRESETS: { label: string; cron: string }[] = [
+  { label: "Every hour", cron: "0 * * * *" },
+  { label: "Every 6 hours", cron: "0 */6 * * *" },
+  { label: "Daily at 03:00 UTC", cron: "0 3 * * *" },
+  { label: "Weekly (Mon 03:00 UTC)", cron: "0 3 * * 1" },
+];
+const MONITOR_ENGINES: { id: "DISCOVERY" | "TLS" | "WEB" | "NETWORK"; label: string }[] = [
+  { id: "DISCOVERY", label: "Discovery" },
+  { id: "TLS", label: "TLS" },
+  { id: "WEB", label: "Web" },
+  { id: "NETWORK", label: "Ports (needs approval)" },
+];
+const CHANNEL_LABEL: Record<NotificationType, string> = { SLACK: "Slack", WEBHOOK: "Webhook", EMAIL: "Email", WHATSAPP: "WhatsApp" };
+const CHANNEL_HINT: Record<NotificationType, string> = {
+  SLACK: "Slack incoming-webhook URL (https://hooks.slack.com/...)",
+  WEBHOOK: "An HTTPS URL to POST a JSON alert to",
+  EMAIL: "An email address",
+  WHATSAPP: "A phone number in international format, e.g. +919812345678",
+};
+
+export function MonitoringView({
+  org,
+  schedules,
+  channels,
+  scopes,
+  act,
+}: {
+  org: OrgSummary;
+  schedules: Schedule[];
+  channels: Channel[];
+  scopes: Scope[];
+  act: Act;
+}) {
+  const manage = can.manageMonitoring(org.role);
+  const live = scopes.filter((s) => s.status === "VERIFIED");
+  const scopeName = (id: string) => scopes.find((s) => s.id === id)?.value ?? "(removed)";
+
+  const [sScope, setSScope] = useState("");
+  const [cron, setCron] = useState(CRON_PRESETS[2]!.cron);
+  const [engines, setEngines] = useState<string[]>(["TLS", "WEB"]);
+  const [cType, setCType] = useState<NotificationType>("SLACK");
+  const [cName, setCName] = useState("");
+  const [cTarget, setCTarget] = useState("");
+  const [cSev, setCSev] = useState<Severity>("HIGH");
+
+  const field = "rounded-md border border-line bg-sheet px-3 py-2 text-sm";
+
+  return (
+    <section className="flex flex-col gap-10">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Monitoring</h1>
+        <p className="mt-2 max-w-2xl text-muted">
+          Re-scan proven boundaries on a schedule, and get alerted when something new and serious shows up. Scheduled scans go
+          through the same authorization and limits as manual ones.
+        </p>
+      </div>
+
+      <div>
+        <h2 className="text-lg font-medium">Recurring scans</h2>
+        {manage && (
+          <form
+            className="mt-3 flex flex-wrap items-end gap-3 rounded-md border border-line bg-sheet p-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!sScope) return;
+              void act(() => api(`/orgs/${org.id}/schedules`, { method: "POST", body: { scopeId: sScope, cron, engines } }), "Schedule created.");
+            }}
+          >
+            <label className="flex flex-col gap-1 text-sm font-medium">
+              Boundary
+              <select value={sScope} onChange={(e) => setSScope(e.target.value)} required className={field}>
+                <option value="">Choose...</option>
+                {live.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.value}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-sm font-medium">
+              How often
+              <select value={cron} onChange={(e) => setCron(e.target.value)} className={field}>
+                {CRON_PRESETS.map((p) => (
+                  <option key={p.cron} value={p.cron}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <fieldset className="flex flex-col gap-1 text-sm font-medium">
+              Checks
+              <span className="flex flex-wrap gap-2">
+                {MONITOR_ENGINES.map((e) => (
+                  <label key={e.id} className="flex items-center gap-1 text-sm font-normal">
+                    <input
+                      type="checkbox"
+                      checked={engines.includes(e.id)}
+                      onChange={(ev) => setEngines((prev) => (ev.target.checked ? [...prev, e.id] : prev.filter((x) => x !== e.id)))}
+                    />
+                    {e.label}
+                  </label>
+                ))}
+              </span>
+            </fieldset>
+            <button type="submit" disabled={!sScope || engines.length === 0} className={btnPrimary}>
+              Add schedule
+            </button>
+          </form>
+        )}
+        {live.length === 0 && <p className="mt-3 text-sm text-muted">Prove a boundary first to schedule scans on it.</p>}
+        {schedules.length > 0 && (
+          <ul className="mt-4 flex flex-col divide-y divide-line border-y border-line">
+            {schedules.map((s) => (
+              <li key={s.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 py-3">
+                <span className="font-mono text-sm">{scopeName(s.scopeId)}</span>
+                <span className="text-sm text-muted">{CRON_PRESETS.find((p) => p.cron === s.cron)?.label ?? s.cron}</span>
+                <span className="text-sm text-muted">{s.engines.join(", ")}</span>
+                {!s.enabled && <span className="text-sm text-wait">paused</span>}
+                {s.nextRunAt && s.enabled && <span className="text-sm text-muted">next {fmtDate(s.nextRunAt)}</span>}
+                {manage && (
+                  <span className="ml-auto flex gap-2">
+                    <button onClick={() => act(() => api(`/orgs/${org.id}/schedules/${s.id}`, { method: "PATCH", body: { enabled: !s.enabled } }), s.enabled ? "Schedule paused." : "Schedule resumed.")} className={btnQuiet}>
+                      {s.enabled ? "Pause" : "Resume"}
+                    </button>
+                    <button onClick={() => act(() => api(`/orgs/${org.id}/schedules/${s.id}`, { method: "DELETE" }), "Schedule deleted.")} className={`${btn} text-stop hover:bg-stop/10`}>
+                      Delete
+                    </button>
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div>
+        <h2 className="text-lg font-medium">Alerts</h2>
+        <p className="mt-1 text-sm text-muted">New findings at or above the chosen severity (and anything known-exploited) are sent here.</p>
+        {manage && (
+          <form
+            className="mt-3 flex flex-wrap items-end gap-3 rounded-md border border-line bg-sheet p-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void act(async () => {
+                await api(`/orgs/${org.id}/channels`, { method: "POST", body: { type: cType, name: cName, target: cTarget, minSeverity: cSev } });
+                setCName("");
+                setCTarget("");
+              }, "Alert channel added.");
+            }}
+          >
+            <label className="flex flex-col gap-1 text-sm font-medium">
+              Where
+              <select value={cType} onChange={(e) => setCType(e.target.value as NotificationType)} className={field}>
+                {(Object.keys(CHANNEL_LABEL) as NotificationType[]).map((t) => (
+                  <option key={t} value={t}>
+                    {CHANNEL_LABEL[t]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-sm font-medium">
+              Name
+              <input value={cName} onChange={(e) => setCName(e.target.value)} required placeholder="Ops channel" className={field} />
+            </label>
+            <label className="flex flex-1 flex-col gap-1 text-sm font-medium">
+              Target
+              <input value={cTarget} onChange={(e) => setCTarget(e.target.value)} required placeholder={CHANNEL_HINT[cType]} className={`${field} w-full`} />
+            </label>
+            <label className="flex flex-col gap-1 text-sm font-medium">
+              Alert from
+              <select value={cSev} onChange={(e) => setCSev(e.target.value as Severity)} className={field}>
+                <option value="CRITICAL">Critical only</option>
+                <option value="HIGH">High and up</option>
+                <option value="MEDIUM">Medium and up</option>
+              </select>
+            </label>
+            <button type="submit" className={btnPrimary}>
+              Add channel
+            </button>
+          </form>
+        )}
+        {channels.length > 0 && (
+          <ul className="mt-4 flex flex-col divide-y divide-line border-y border-line">
+            {channels.map((c) => (
+              <li key={c.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 py-3">
+                <span className="font-medium">{c.name}</span>
+                <span className="text-sm text-muted">{CHANNEL_LABEL[c.type]}</span>
+                <span className="text-sm text-muted">from {SEVERITY_META[c.minSeverity].label.toLowerCase()}{c.kevAlways ? " (+ known-exploited)" : ""}</span>
+                {!c.enabled && <span className="text-sm text-wait">off</span>}
+                {c.lastError && <span className="text-sm text-stop" title={c.lastError}>last send failed</span>}
+                {manage && (
+                  <span className="ml-auto flex gap-2">
+                    <button onClick={() => act(() => api(`/orgs/${org.id}/channels/${c.id}`, { method: "PATCH", body: { enabled: !c.enabled } }), c.enabled ? "Channel turned off." : "Channel turned on.")} className={btnQuiet}>
+                      {c.enabled ? "Turn off" : "Turn on"}
+                    </button>
+                    <button onClick={() => act(() => api(`/orgs/${org.id}/channels/${c.id}`, { method: "DELETE" }), "Channel removed.")} className={`${btn} text-stop hover:bg-stop/10`}>
+                      Remove
+                    </button>
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </section>
   );
 }
