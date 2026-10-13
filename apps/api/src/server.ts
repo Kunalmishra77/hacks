@@ -25,6 +25,14 @@ const app = await buildApp({
   redis,
   limiter: redis ? createRedisRateLimiter(redis) : createMemoryRateLimiter(),
   queue: redis ? createBullScanQueue(redis) : undefined,
+  readiness: async () => {
+    const db = await prisma
+      .$queryRaw`SELECT 1`
+      .then(() => true)
+      .catch(() => false);
+    const redisOk = redis ? await redis.ping().then((r) => r === "PONG").catch(() => false) : undefined;
+    return { db, redis: redisOk };
+  },
 });
 
 if (redis) {

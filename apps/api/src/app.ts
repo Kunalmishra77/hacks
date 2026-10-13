@@ -35,6 +35,8 @@ export interface BuildAppOptions {
   redis?: Redis;
   /** AI advisory provider. Tests inject a fake; otherwise built from config.ai. */
   aiProvider?: AiProvider;
+  /** Readiness probe: checks dependencies (DB, Redis). Defaults to always-ready. */
+  readiness?: () => Promise<{ db: boolean; redis?: boolean }>;
 }
 
 declare module "fastify" {
@@ -53,6 +55,7 @@ export async function buildApp({
   queue = createMemoryScanQueue(),
   redis,
   aiProvider,
+  readiness,
 }: BuildAppOptions): Promise<FastifyInstance> {
   const app = Fastify({
     logger: logger && {
@@ -87,7 +90,18 @@ export async function buildApp({
     return reply.code(500).send({ error: "internal_error" });
   });
 
+  // Liveness: the process is up. Readiness: dependencies are reachable.
   app.get("/health", async () => ({ status: "ok" }));
+  app.get("/ready", async (_req, reply) => {
+    if (!readiness) return { status: "ok" };
+    try {
+      const r = await readiness();
+      const ok = r.db && r.redis !== false;
+      return reply.code(ok ? 200 : 503).send({ status: ok ? "ok" : "degraded", ...r });
+    } catch {
+      return reply.code(503).send({ status: "error" });
+    }
+  });
   await app.register(authRoutes, { config, store });
   await app.register(orgRoutes, { config, store });
 
