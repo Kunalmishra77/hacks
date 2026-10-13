@@ -25,11 +25,12 @@
     "jose": "^6.2.12",
     "nodemailer": "^10.1.0",
     "zod": "^4.6.5",
-    "@aegis/ai": "*"
+    "@aegis/ai": "*",
+    "@aegis/worker-kit": "*",
+    "@aegis/report": "*"
   },
   "devDependencies": {
     "@aegis/worker-discovery": "*",
-    "@aegis/worker-kit": "*",
     "@aegis/worker-web": "*",
     "@types/nodemailer": "^8.0.2"
   }
