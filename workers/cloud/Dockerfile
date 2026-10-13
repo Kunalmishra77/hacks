@@ -24,7 +24,7 @@ COPY workers/web/package.json workers/web/
 COPY workers/tls/package.json workers/tls/
 COPY workers/network/package.json workers/network/
 COPY workers/cloud/package.json workers/cloud/
-RUN npm ci --ignore-scripts --no-audit --no-fund \
+RUN npm ci --ignore-scripts --no-audit --no-fund --include=dev \
       --workspace @aegis/worker-cloud --include-workspace-root
 COPY packages/db/prisma packages/db/prisma
 RUN npx prisma generate --schema packages/db/prisma/schema.prisma

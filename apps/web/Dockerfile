@@ -22,7 +22,7 @@ COPY workers/discovery/package.json workers/discovery/
 COPY workers/web/package.json workers/web/
 COPY workers/tls/package.json workers/tls/
 COPY workers/network/package.json workers/network/
-RUN npm ci --ignore-scripts --no-audit --no-fund --workspace @aegis/web --include-workspace-root
+RUN npm ci --ignore-scripts --no-audit --no-fund --include=dev --workspace @aegis/web --include-workspace-root
 COPY apps/web apps/web
 
 ARG NEXT_PUBLIC_API_URL="http://localhost:4000"
