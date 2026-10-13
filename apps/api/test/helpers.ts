@@ -22,6 +22,7 @@ export const testConfig: AppConfig = {
   gateLimits: { maxConcurrentScansPerOrg: 3, scanStartsPerScopePerMinute: 5 },
   cveEnrichment: false,
   reportShareTtlHours: 72,
+  scheduler: false,
 };
 
 export async function makeApp(

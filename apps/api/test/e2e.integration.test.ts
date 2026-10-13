@@ -4,9 +4,13 @@
 // tools, so nothing on the internet is contacted.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrismaClient } from "@aegis/db";
+import { createScopeGate, createMemoryRateLimiter, createAuditLogger } from "@aegis/core";
 import { startEnrichmentWorker, startEngineWorker } from "@aegis/worker-kit";
 import { createDiscoveryEngine } from "@aegis/worker-discovery/engine";
 import { createWebEngine } from "@aegis/worker-web/engine";
+import { runDueSchedules } from "../src/scheduler.js";
+import { dispatchScanAlerts } from "../src/notify/dispatch.js";
+import { createSenders } from "../src/notify/senders.js";
 import { buildApp } from "../src/app.js";
 import { createBullScanQueue } from "../src/queue.js";
 import { connectRedis } from "../src/redis.js";
@@ -169,6 +173,73 @@ describe.skipIf(!dbUrl || !redisUrl)("end-to-end discovery (integration)", { tim
         s2 = (await prisma.scan.findUniqueOrThrow({ where: { id: scan2 } })).status;
       }
       expect(await prisma.finding.count({ where: { asset: { scopeId: scope.id } } })).toBe(before);
+    } finally {
+      await enrich.close();
+      await worker.close();
+      await app.close();
+      await queue.close();
+      redis.disconnect();
+    }
+  });
+
+  it("a due schedule fires a scan that enriches and fires a webhook alert", async () => {
+    const redis = connectRedis(redisUrl!);
+    await redis.connect();
+    const queue = createBullScanQueue(redis);
+    let token = "";
+    const verifier = createVerifier({ resolveTxt: async () => [[token]], fetchWellKnown: async () => "", assumeRoleAccount: async () => "" });
+    const store = createPrismaStore(prisma);
+    const app = await buildApp({ config: testConfig, store, verifier, queue });
+
+    const suffix = Date.now();
+    const apex = `mon-${suffix}.example.com`;
+    const reg = await app.inject({ method: "POST", url: "/auth/register", payload: { email: `mon-${suffix}@example.com`, password: PASSWORD, orgName: "Mon Co" } });
+    const { accessToken, org } = reg.json() as { accessToken: string; org: { id: string } };
+    const post = (url: string, payload?: object) => app.inject({ method: "POST", url, headers: bearer(accessToken), payload });
+    const scope = (await post(`/orgs/${org.id}/scopes`, { type: "DOMAIN", value: apex })).json().scope;
+    token = scope.verification.DNS_TXT.value;
+    await post(`/orgs/${org.id}/scopes/${scope.id}/verify`, { method: "DNS_TXT" });
+
+    // A webhook channel that captures deliveries.
+    const posts: unknown[] = [];
+    const fetchFn = (async (_u: string, init: RequestInit) => (posts.push(JSON.parse(init.body as string)), { ok: true, status: 200 } as Response)) as unknown as typeof fetch;
+    await post(`/orgs/${org.id}/channels`, { type: "WEBHOOK", name: "ops", target: "https://hooks.example.com/x", minSeverity: "LOW" });
+
+    // Web worker returns an exposed .git (HIGH), enrichment + alerts wired in.
+    const engine = createWebEngine({
+      resolve: async () => ({ addresses: ["93.184.216.34"] }),
+      request: async (url): Promise<{ status: number; headers: Record<string, string>; setCookies: string[]; bodyPrefix: string }> =>
+        url.pathname === "/.git/HEAD"
+          ? { status: 200, headers: {}, setCookies: [], bodyPrefix: "ref: refs/heads/main\n" }
+          : url.pathname === "/"
+            ? { status: 200, headers: { server: "nginx" }, setCookies: [], bodyPrefix: "<html>" }
+            : { status: 404, headers: { "content-type": "text/html" }, setCookies: [], bodyPrefix: "<html>no</html>" },
+    });
+    const worker = startEngineWorker({ engine, redisUrl: redisUrl!, prisma, log: () => {} });
+    const senders = createSenders({ fetch: fetchFn, resolve: async () => ["93.184.216.34"] });
+    const enrich = startEnrichmentWorker({
+      redisUrl: redisUrl!,
+      prisma,
+      intel: { lookup: async () => new Map() },
+      log: () => {},
+      afterEnrich: async (scanId, orgId) => {
+        const scan = await store.scans.find(orgId, scanId);
+        if (scan) await dispatchScanAlerts({ store, senders }, { orgId, scanId, scopeLabel: apex, since: scan.createdAt });
+      },
+    });
+
+    try {
+      // A schedule due in the past, then run the tick manually.
+      const gate = createScopeGate({ repo: store.gate, limiter: createMemoryRateLimiter(), audit: createAuditLogger(store.audit) });
+      await prisma.scanSchedule.create({ data: { orgId: org.id, scopeId: scope.id, cron: "0 3 * * *", engines: ["WEB"], createdById: reg.json().user.id, nextRunAt: new Date(Date.now() - 1000), enabled: true } });
+      const summary = await runDueSchedules({ store, gate, queue, config: testConfig, log: () => {} });
+      expect(summary.schedulesRun).toBe(1);
+      expect(summary.queued).toBeGreaterThan(0);
+
+      // Wait for the alert to be delivered (scan → enrich → dispatch).
+      for (let i = 0; i < 150 && posts.length === 0; i++) await new Promise((r) => setTimeout(r, 200));
+      expect(posts.length).toBeGreaterThan(0);
+      expect((posts[0] as { findings: { title: string }[] }).findings.some((f) => /git/i.test(f.title))).toBe(true);
     } finally {
       await enrich.close();
       await worker.close();

@@ -9,6 +9,7 @@ import {
   type ScopeGate,
 } from "@aegis/core";
 import type { AppConfig } from "../config.js";
+import { requestScan } from "../scans/request.js";
 import type { ScanQueue } from "../queue.js";
 import type { ScanRecord, Store } from "../store/types.js";
 import { requestContext } from "./context.js";
@@ -103,42 +104,16 @@ export async function scanRoutes(
       const member = req.membership!;
       const actor = { type: "user" as const, id: member.userId };
 
-      const d = await gate.authorize({ mode: "enqueue", orgId: member.orgId, assetId: body.assetId, engine: body.engine, actor });
-      if (d.decision !== "ALLOW" && d.decision !== "NEEDS_APPROVAL") return sendDenied(reply, d);
-
-      const scopeId = d.decision === "ALLOW" ? d.target.scopeId : d.scopeId;
-      const status = d.decision === "ALLOW" ? "QUEUED" : "PENDING_APPROVAL";
-      let scan: ScanRecord;
-      try {
-        scan = await store.transaction(async (tx) => {
-          if (status === "QUEUED") await admit(tx, member.orgId);
-          const created = await tx.scans.create({
-            orgId: member.orgId,
-            scopeId,
-            assetId: body.assetId,
-            engine: body.engine,
-            status,
-            requestedById: member.userId,
-          });
-          await createAuditLogger(tx.audit).record({
-            action: "scan.requested",
-            actor,
-            orgId: member.orgId,
-            scopeId,
-            scanId: created.id,
-            targetId: body.assetId,
-            payload: { engine: body.engine, status },
-            ...requestContext(req),
-          });
-          return created;
-        });
-      } catch (e) {
-        if (e instanceof AdmissionThrottled) return sendConcurrencyThrottled(reply);
-        throw e;
+      const result = await requestScan(
+        { store, gate, queue, maxConcurrentScansPerOrg: config.gateLimits.maxConcurrentScansPerOrg },
+        { orgId: member.orgId, assetId: body.assetId, engine: body.engine, actor, requestedById: member.userId, ctx: requestContext(req) },
+      );
+      if (!result.ok) {
+        if (result.kind === "denied") return sendDenied(reply, result.decision);
+        if (result.kind === "throttled_concurrency") return sendConcurrencyThrottled(reply);
+        return reply.code(503).send({ error: "queue_unavailable", scanId: result.scan.id });
       }
-
-      if (d.decision === "ALLOW" && !(await enqueue(scan, d.target, reply))) return reply;
-      return reply.code(status === "QUEUED" ? 201 : 202).send({ scan: scanDto(scan) });
+      return reply.code(result.status === "QUEUED" ? 201 : 202).send({ scan: scanDto(result.scan) });
     },
   );
 

@@ -13,6 +13,36 @@ import type {
 
 export type FindingStatus = "OPEN" | "TRIAGED" | "FIXED" | "FALSE_POSITIVE";
 
+export type NotificationType = "SLACK" | "WEBHOOK" | "EMAIL" | "WHATSAPP";
+
+export interface ScheduleRecord {
+  id: string;
+  orgId: string;
+  scopeId: string;
+  cron: string;
+  engines: Engine[];
+  enabled: boolean;
+  createdById: string;
+  lastRunAt: Date | null;
+  nextRunAt: Date | null;
+  createdAt: Date;
+}
+
+export interface ChannelRecord {
+  id: string;
+  orgId: string;
+  type: NotificationType;
+  name: string;
+  target: string;
+  minSeverity: Severity;
+  kevAlways: boolean;
+  enabled: boolean;
+  createdById: string;
+  lastNotifiedAt: Date | null;
+  lastError: string | null;
+  createdAt: Date;
+}
+
 export interface ReportRecord {
   id: string;
   orgId: string;
@@ -29,6 +59,7 @@ export interface FindingRecord {
   id: string;
   assetId: string;
   scanId: string;
+  lastScanId: string | null;
   type: string;
   severity: Severity;
   cvss: number | null;
@@ -190,6 +221,7 @@ export interface Store {
       engine: Engine;
       status: "PENDING_APPROVAL" | "QUEUED";
       requestedById: string;
+      scheduleId?: string;
     }): Promise<ScanRecord>;
     find(orgId: string, id: string): Promise<ScanRecord | null>;
     listByOrg(orgId: string): Promise<ScanRecord[]>;
@@ -219,8 +251,30 @@ export interface Store {
     setStatus(orgId: string, id: string, status: FindingStatus): Promise<boolean>;
     /** Open/triaged counts per severity, for the dashboard summary. */
     summary(orgId: string): Promise<Record<Severity, number>>;
+    /** Findings this scan newly created (firstSeen at/after `since`), for alerts. */
+    newForScan(scanId: string, since: Date): Promise<(FindingRecord & { assetAddress: string })[]>;
   };
   /** Read-only view the Scope Authorization Gate uses. */
+  schedules: {
+    create(input: { orgId: string; scopeId: string; cron: string; engines: Engine[]; createdById: string; nextRunAt: Date }): Promise<ScheduleRecord>;
+    listByOrg(orgId: string): Promise<ScheduleRecord[]>;
+    find(orgId: string, id: string): Promise<ScheduleRecord | null>;
+    update(orgId: string, id: string, patch: { cron?: string; engines?: Engine[]; enabled?: boolean; nextRunAt?: Date | null }): Promise<ScheduleRecord | null>;
+    remove(orgId: string, id: string): Promise<boolean>;
+    /** Enabled schedules whose nextRunAt has passed. Capped. */
+    dueForRun(now: Date, limit: number): Promise<ScheduleRecord[]>;
+    markRun(id: string, lastRunAt: Date, nextRunAt: Date | null): Promise<void>;
+  };
+  channels: {
+    create(input: { orgId: string; type: NotificationType; name: string; target: string; minSeverity: Severity; kevAlways: boolean; createdById: string }): Promise<ChannelRecord>;
+    listByOrg(orgId: string): Promise<ChannelRecord[]>;
+    /** Enabled channels for an org, used when dispatching alerts. */
+    enabledForOrg(orgId: string): Promise<ChannelRecord[]>;
+    find(orgId: string, id: string): Promise<ChannelRecord | null>;
+    update(orgId: string, id: string, patch: { name?: string; target?: string; minSeverity?: Severity; kevAlways?: boolean; enabled?: boolean }): Promise<ChannelRecord | null>;
+    remove(orgId: string, id: string): Promise<boolean>;
+    recordResult(id: string, at: Date, error: string | null): Promise<void>;
+  };
   reports: {
     create(input: {
       orgId: string;

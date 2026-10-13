@@ -10,6 +10,8 @@ import {
   type FindingRecord,
   type FindingStatus,
   type ReportRecord,
+  type ScheduleRecord,
+  type ChannelRecord,
   type RefreshTokenRecord,
   type ScanRecord,
   type ScopeRecord,
@@ -28,6 +30,8 @@ interface State {
   scans: ScanRecord[];
   findings: FindingRecord[];
   reports: (ReportRecord & { content: string })[];
+  schedules: ScheduleRecord[];
+  channels: ChannelRecord[];
   audit: AuditEvent[];
 }
 
@@ -42,6 +46,8 @@ const empty = (): State => ({
   scans: [],
   findings: [],
   reports: [],
+  schedules: [],
+  channels: [],
   audit: [],
 });
 
@@ -291,6 +297,76 @@ export function createMemoryStore(): Store & { readonly auditEvents: readonly Au
         return killed;
       },
     },
+    schedules: {
+      async create(input) {
+        const r: ScheduleRecord = { id: randomUUID(), enabled: true, lastRunAt: null, createdAt: new Date(), ...input };
+        s.schedules.push(r);
+        return copy(r);
+      },
+      async listByOrg(orgId) {
+        return s.schedules.filter((x) => x.orgId === orgId).map(copy);
+      },
+      async find(orgId, id) {
+        const x = s.schedules.find((y) => y.id === id && y.orgId === orgId);
+        return x ? copy(x) : null;
+      },
+      async update(orgId, id, patch) {
+        const x = s.schedules.find((y) => y.id === id && y.orgId === orgId);
+        if (!x) return null;
+        Object.assign(x, patch);
+        return copy(x);
+      },
+      async remove(orgId, id) {
+        const i = s.schedules.findIndex((y) => y.id === id && y.orgId === orgId);
+        if (i < 0) return false;
+        s.schedules.splice(i, 1);
+        return true;
+      },
+      async dueForRun(now, limit) {
+        return s.schedules
+          .filter((x) => x.enabled && x.nextRunAt !== null && x.nextRunAt <= now)
+          .sort((a, b) => (a.nextRunAt!.getTime()) - (b.nextRunAt!.getTime()))
+          .slice(0, limit)
+          .map(copy);
+      },
+      async markRun(id, lastRunAt, nextRunAt) {
+        const x = s.schedules.find((y) => y.id === id);
+        if (x) Object.assign(x, { lastRunAt, nextRunAt });
+      },
+    },
+    channels: {
+      async create(input) {
+        const c: ChannelRecord = { id: randomUUID(), enabled: true, lastNotifiedAt: null, lastError: null, createdAt: new Date(), ...input };
+        s.channels.push(c);
+        return copy(c);
+      },
+      async listByOrg(orgId) {
+        return s.channels.filter((x) => x.orgId === orgId).map(copy);
+      },
+      async enabledForOrg(orgId) {
+        return s.channels.filter((x) => x.orgId === orgId && x.enabled).map(copy);
+      },
+      async find(orgId, id) {
+        const x = s.channels.find((y) => y.id === id && y.orgId === orgId);
+        return x ? copy(x) : null;
+      },
+      async update(orgId, id, patch) {
+        const x = s.channels.find((y) => y.id === id && y.orgId === orgId);
+        if (!x) return null;
+        Object.assign(x, patch);
+        return copy(x);
+      },
+      async remove(orgId, id) {
+        const i = s.channels.findIndex((y) => y.id === id && y.orgId === orgId);
+        if (i < 0) return false;
+        s.channels.splice(i, 1);
+        return true;
+      },
+      async recordResult(id, at, error) {
+        const x = s.channels.find((y) => y.id === id);
+        if (x) Object.assign(x, { lastNotifiedAt: at, lastError: error });
+      },
+    },
     reports: {
       async create(input) {
         const r = { id: randomUUID(), format: "HTML" as const, createdAt: new Date(), ...input };
@@ -341,6 +417,12 @@ export function createMemoryStore(): Store & { readonly auditEvents: readonly Au
         if (!f || !scope) return false;
         f.status = status;
         return true;
+      },
+      async newForScan(scanId, since) {
+        return s.findings
+          .filter((f) => f.lastScanId === scanId && f.firstSeenAt >= since && (f.status === "OPEN" || f.status === "TRIAGED"))
+          .sort((a, b) => (b.riskScore ?? -1) - (a.riskScore ?? -1))
+          .map((f) => ({ ...copy(f), assetAddress: s.assets.find((a) => a.id === f.assetId)?.address ?? "" }));
       },
       async summary(orgId) {
         const scopeIds = new Set(s.scopes.filter((sc) => sc.orgId === orgId).map((sc) => sc.id));
@@ -411,6 +493,8 @@ export function createMemoryStore(): Store & { readonly auditEvents: readonly Au
         scans: s.scans.map(copy),
         findings: s.findings.map(copy),
         reports: s.reports.map(copy),
+        schedules: s.schedules.map(copy),
+        channels: s.channels.map(copy),
         audit: s.audit.slice(),
       };
       try {

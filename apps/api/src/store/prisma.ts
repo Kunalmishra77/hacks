@@ -63,6 +63,32 @@ const scopeSelect = {
   createdById: true,
   createdAt: true,
 } as const;
+const scheduleSelect = {
+  id: true,
+  orgId: true,
+  scopeId: true,
+  cron: true,
+  engines: true,
+  enabled: true,
+  createdById: true,
+  lastRunAt: true,
+  nextRunAt: true,
+  createdAt: true,
+} as const;
+const channelSelect = {
+  id: true,
+  orgId: true,
+  type: true,
+  name: true,
+  target: true,
+  minSeverity: true,
+  kevAlways: true,
+  enabled: true,
+  createdById: true,
+  lastNotifiedAt: true,
+  lastError: true,
+  createdAt: true,
+} as const;
 const reportSelect = {
   id: true,
   orgId: true,
@@ -220,6 +246,15 @@ function build(db: Db, root: PrismaClient): Store {
         const r = await db.finding.updateMany({ where: { id, asset: { scope: { orgId } } }, data: { status } });
         return r.count === 1;
       },
+      async newForScan(scanId, since) {
+        const rows = await db.finding.findMany({
+          where: { lastScanId: scanId, firstSeenAt: { gte: since }, status: { in: ["OPEN", "TRIAGED"] } },
+          include: { asset: { select: { address: true } } },
+          orderBy: [{ riskScore: { sort: "desc", nulls: "last" } }],
+          take: 200,
+        });
+        return rows.map(({ asset, ...f }) => ({ ...f, assetAddress: asset.address }));
+      },
       async summary(orgId) {
         const rows = await db.finding.groupBy({
           by: ["severity"],
@@ -229,6 +264,41 @@ function build(db: Db, root: PrismaClient): Store {
         const out = { INFO: 0, LOW: 0, MEDIUM: 0, HIGH: 0, CRITICAL: 0 };
         for (const r of rows) out[r.severity] = r._count;
         return out;
+      },
+    },
+    schedules: {
+      create: (input) => db.scanSchedule.create({ data: { ...input, enabled: true }, select: scheduleSelect }),
+      listByOrg: (orgId) => db.scanSchedule.findMany({ where: { orgId }, select: scheduleSelect, orderBy: { createdAt: "asc" } }),
+      find: (orgId, id) => db.scanSchedule.findFirst({ where: { id, orgId }, select: scheduleSelect }),
+      async update(orgId, id, patch) {
+        const r = await db.scanSchedule.updateMany({ where: { id, orgId }, data: patch });
+        return r.count === 1 ? db.scanSchedule.findUnique({ where: { id }, select: scheduleSelect }) : null;
+      },
+      async remove(orgId, id) {
+        const r = await db.scanSchedule.deleteMany({ where: { id, orgId } });
+        return r.count === 1;
+      },
+      dueForRun: (now, limit) =>
+        db.scanSchedule.findMany({ where: { enabled: true, nextRunAt: { lte: now } }, select: scheduleSelect, orderBy: { nextRunAt: "asc" }, take: limit }),
+      async markRun(id, lastRunAt, nextRunAt) {
+        await db.scanSchedule.update({ where: { id }, data: { lastRunAt, nextRunAt } });
+      },
+    },
+    channels: {
+      create: (input) => db.notificationChannel.create({ data: { ...input, enabled: true }, select: channelSelect }),
+      listByOrg: (orgId) => db.notificationChannel.findMany({ where: { orgId }, select: channelSelect, orderBy: { createdAt: "asc" } }),
+      enabledForOrg: (orgId) => db.notificationChannel.findMany({ where: { orgId, enabled: true }, select: channelSelect }),
+      find: (orgId, id) => db.notificationChannel.findFirst({ where: { id, orgId }, select: channelSelect }),
+      async update(orgId, id, patch) {
+        const r = await db.notificationChannel.updateMany({ where: { id, orgId }, data: patch });
+        return r.count === 1 ? db.notificationChannel.findUnique({ where: { id }, select: channelSelect }) : null;
+      },
+      async remove(orgId, id) {
+        const r = await db.notificationChannel.deleteMany({ where: { id, orgId } });
+        return r.count === 1;
+      },
+      async recordResult(id, at, error) {
+        await db.notificationChannel.update({ where: { id }, data: { lastNotifiedAt: at, lastError: error } });
       },
     },
     reports: {

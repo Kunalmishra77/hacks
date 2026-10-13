@@ -33,7 +33,7 @@ async function setup() {
   const now = new Date();
   const mk = (id: string, severity: string, status: string, type: string, riskScore: number | null = null) =>
     ctx.store.raw.findings.push({
-      id, assetId: asset.id, scanId: "scan-x", type, severity: severity as never, cvss: null, cveRefs: [],
+      id, assetId: asset.id, scanId: "scan-x", lastScanId: "scan-x", type, severity: severity as never, cvss: null, cveRefs: [],
       title: `${type} on ${asset.address}`, evidence: { url: `https://${asset.address}/` }, remediation: "Fix it",
       status: status as never, epss: null, kevListed: false, riskScore, enrichedAt: riskScore === null ? null : now, firstSeenAt: now, lastSeenAt: now,
     });

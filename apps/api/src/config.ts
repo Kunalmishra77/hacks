@@ -29,6 +29,14 @@ const EnvSchema = z
     // Absolute base URL of this API, used to build shareable report links.
     API_PUBLIC_URL: z.string().url().optional().or(z.literal("").transform(() => undefined)),
     REPORT_SHARE_TTL_HOURS: z.coerce.number().int().min(1).max(720).default(72),
+    // Dashboard URL put into alert messages.
+    WEB_PUBLIC_URL: z.string().url().optional().or(z.literal("").transform(() => undefined)),
+    // Run the schedule tick in this process. On by default; needs Redis.
+    SCHEDULER: z.enum(["on", "off"]).default("on"),
+    SMTP_URL: z.string().optional().or(z.literal("").transform(() => undefined)),
+    SMTP_FROM: z.string().optional().or(z.literal("").transform(() => undefined)),
+    WHATSAPP_PHONE_NUMBER_ID: z.string().optional().or(z.literal("").transform(() => undefined)),
+    WHATSAPP_TOKEN: z.string().optional().or(z.literal("").transform(() => undefined)),
   })
   .refine((e) => e.JWT_SECRET !== e.JWT_REFRESH_SECRET, {
     message: "JWT_SECRET and JWT_REFRESH_SECRET must differ",
@@ -59,6 +67,11 @@ export interface AppConfig {
   cveEnrichment: boolean;
   apiPublicUrl?: string;
   reportShareTtlHours: number;
+  webPublicUrl?: string;
+  scheduler: boolean;
+  smtpUrl?: string;
+  smtpFrom?: string;
+  whatsapp?: { phoneNumberId: string; token: string };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -99,5 +112,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     cveEnrichment: e.CVE_ENRICHMENT === "on",
     apiPublicUrl: e.API_PUBLIC_URL,
     reportShareTtlHours: e.REPORT_SHARE_TTL_HOURS,
+    webPublicUrl: e.WEB_PUBLIC_URL,
+    scheduler: e.SCHEDULER === "on",
+    smtpUrl: e.SMTP_URL,
+    smtpFrom: e.SMTP_FROM,
+    whatsapp: e.WHATSAPP_PHONE_NUMBER_ID && e.WHATSAPP_TOKEN ? { phoneNumberId: e.WHATSAPP_PHONE_NUMBER_ID, token: e.WHATSAPP_TOKEN } : undefined,
   };
 }

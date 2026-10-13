@@ -23,11 +23,13 @@
     "fastify-plugin": "^6.0.1",
     "ioredis": "^5.11.1",
     "jose": "^6.2.12",
+    "nodemailer": "^10.1.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@aegis/worker-kit": "*",
     "@aegis/worker-discovery": "*",
-    "@aegis/worker-web": "*"
+    "@aegis/worker-kit": "*",
+    "@aegis/worker-web": "*",
+    "@types/nodemailer": "^8.0.2"
   }
 }
