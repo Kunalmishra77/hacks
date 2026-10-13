@@ -14,6 +14,8 @@ import {
   type Severity,
   type SeveritySummary,
   type Report,
+  type AiAdvice,
+  ApiError,
   type Schedule,
   type Channel,
   type NotificationType,
@@ -691,6 +693,7 @@ export function FindingsView({
                     </p>
                   )}
                   <EvidenceList evidence={f.evidence} />
+                  {can.triage(org.role) && <AiAdvicePanel orgId={org.id} findingId={f.id} initial={f.aiAdvice} model={f.aiModel} />}
                   <p className="mt-2 text-xs text-muted">
                     First seen {fmtDate(f.firstSeenAt)} · last seen {fmtDate(f.lastSeenAt)}
                   </p>
@@ -1032,5 +1035,74 @@ export function MonitoringView({
         )}
       </div>
     </section>
+  );
+}
+
+// ── AI advisory panel (Phase 7) ────────────────────────────────────
+
+const FP_LABEL: Record<AiAdvice["falsePositiveLikelihood"], string> = {
+  low: "unlikely to be a false positive",
+  medium: "could be a false positive",
+  high: "likely a false positive",
+  unknown: "false-positive likelihood unclear",
+};
+
+function AiAdvicePanel({ orgId, findingId, initial, model }: { orgId: string; findingId: string; initial: AiAdvice | null; model: string | null }) {
+  const [advice, setAdvice] = useState<AiAdvice | null>(initial);
+  const [usedModel, setUsedModel] = useState<string | null>(model);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function run(refresh: boolean) {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await api<{ advice: AiAdvice; model: string }>(`/orgs/${orgId}/findings/${findingId}/advise${refresh ? "?refresh=1" : ""}`, { method: "POST" });
+      setAdvice(res.advice);
+      setUsedModel(res.model);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 501) setError("AI advice isn't configured on this server.");
+      else if (e instanceof ApiError && e.status === 502) setError("The AI provider couldn't be reached. Try again.");
+      else if (e instanceof ApiError && e.status === 429) setError("AI is rate-limited right now. Try again shortly.");
+      else setError("Couldn't get AI advice.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!advice) {
+    return (
+      <div className="mt-3">
+        <button onClick={() => run(false)} disabled={busy} className={btnQuiet}>
+          {busy ? "Asking AI…" : "Explain with AI"}
+        </button>
+        {error && <p className="mt-2 text-sm text-stop">{error}</p>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3 rounded-md border border-boundary/40 bg-boundary/5 p-3 text-sm">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-xs font-semibold tracking-wide text-boundary">AI SUGGESTION — review before acting</span>
+        <button onClick={() => run(true)} disabled={busy} className="text-xs text-muted underline underline-offset-2 hover:text-ink">
+          {busy ? "…" : "Regenerate"}
+        </button>
+      </div>
+      <p className="mt-2">{advice.explanation}</p>
+      {advice.impact && <p className="mt-1 text-muted">{advice.impact}</p>}
+      {advice.remediationSteps.length > 0 && (
+        <ol className="mt-2 list-decimal pl-5">
+          {advice.remediationSteps.map((s, i) => (
+            <li key={i}>{s}</li>
+          ))}
+        </ol>
+      )}
+      <p className="mt-2 text-xs text-muted">
+        {FP_LABEL[advice.falsePositiveLikelihood]}
+        {advice.falsePositiveReason ? ` — ${advice.falsePositiveReason}` : ""} · confidence {advice.confidence}
+        {usedModel ? ` · ${usedModel}` : ""}
+      </p>
+    </div>
   );
 }

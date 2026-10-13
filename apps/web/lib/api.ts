@@ -136,6 +136,9 @@ export interface Finding {
   evidence: Record<string, unknown> | null;
   remediation: string | null;
   status: FindingStatus;
+  aiAdvice: AiAdvice | null;
+  aiModel: string | null;
+  aiAdviceAt: string | null;
   epss: number | null;
   kevListed: boolean;
   riskScore: number | null;
@@ -145,6 +148,18 @@ export interface Finding {
 }
 
 export type SeveritySummary = Record<Severity, number>;
+
+export interface AiAdvice {
+  explanation: string;
+  impact: string;
+  falsePositiveLikelihood: "low" | "medium" | "high" | "unknown";
+  falsePositiveReason: string;
+  remediationSteps: string[];
+  confidence: "low" | "medium" | "high";
+  advisory: boolean;
+  model: string;
+  provider: string;
+}
 
 export interface Report {
   id: string;
