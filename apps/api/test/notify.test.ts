@@ -21,7 +21,7 @@ async function seedOrgWithFindings() {
     store.raw.findings.push({
       id: randomUUID(), assetId: asset.id, scanId, lastScanId: scanId, type: `t.${title}`, severity: severity as never,
       cvss: null, cveRefs: [], title, evidence: null, remediation: "fix", status: "OPEN",
-      epss: null, kevListed: kev, riskScore: risk, enrichedAt: now, firstSeenAt: now, lastSeenAt: now,
+      epss: null, aiAdvice: null, aiAdviceAt: null, aiModel: null, kevListed: kev, riskScore: risk, enrichedAt: now, firstSeenAt: now, lastSeenAt: now,
     });
   mk("CRITICAL", 90, true, "Critical KEV");
   mk("MEDIUM", 40, false, "Medium thing");

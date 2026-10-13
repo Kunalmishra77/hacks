@@ -10,11 +10,13 @@ import type { AppConfig } from "./config.js";
 import { authPlugin } from "./plugins/auth.js";
 import { authRoutes } from "./routes/auth.js";
 import { orgRoutes } from "./routes/orgs.js";
+import type { AiProvider } from "@aegis/ai";
 import { createMemoryScanQueue, type ScanQueue } from "./queue.js";
 import { scanRoutes } from "./routes/scans.js";
 import { findingRoutes } from "./routes/findings.js";
 import { reportRoutes } from "./routes/reports.js";
 import { monitoringRoutes } from "./routes/monitoring.js";
+import { aiRoutes } from "./routes/ai.js";
 import { scopeRoutes } from "./routes/scopes.js";
 import { createVerifier, defaultVerificationDeps, type Verifier } from "./verification/verifiers.js";
 import { UniqueViolationError, type Store } from "./store/types.js";
@@ -31,6 +33,8 @@ export interface BuildAppOptions {
   queue?: ScanQueue;
   /** When given, login rate limits are shared across processes too. */
   redis?: Redis;
+  /** AI advisory provider. Tests inject a fake; otherwise built from config.ai. */
+  aiProvider?: AiProvider;
 }
 
 declare module "fastify" {
@@ -48,6 +52,7 @@ export async function buildApp({
   verifier = createVerifier(defaultVerificationDeps),
   queue = createMemoryScanQueue(),
   redis,
+  aiProvider,
 }: BuildAppOptions): Promise<FastifyInstance> {
   const app = Fastify({
     logger: logger && {
@@ -98,6 +103,7 @@ export async function buildApp({
   await app.register(findingRoutes, { store });
   await app.register(reportRoutes, { config, store });
   await app.register(monitoringRoutes, { config, store });
+  await app.register(aiRoutes, { config, store, limiter, aiProvider });
 
   return app;
 }

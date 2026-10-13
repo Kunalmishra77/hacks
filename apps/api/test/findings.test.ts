@@ -35,7 +35,7 @@ async function setup() {
     ctx.store.raw.findings.push({
       id, assetId: asset.id, scanId: "scan-x", lastScanId: "scan-x", type, severity: severity as never, cvss: null, cveRefs: [],
       title: `${type} on ${asset.address}`, evidence: { url: `https://${asset.address}/` }, remediation: "Fix it",
-      status: status as never, epss: null, kevListed: false, riskScore, enrichedAt: riskScore === null ? null : now, firstSeenAt: now, lastSeenAt: now,
+      status: status as never, epss: null, kevListed: false, riskScore, enrichedAt: riskScore === null ? null : now, aiAdvice: null, aiAdviceAt: null, aiModel: null, firstSeenAt: now, lastSeenAt: now,
     });
   const gitId = randomUUID();
   mk(gitId, "HIGH", "OPEN", "web.exposed-git", 72);

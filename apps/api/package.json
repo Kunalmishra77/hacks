@@ -24,7 +24,8 @@
     "ioredis": "^5.11.1",
     "jose": "^6.2.12",
     "nodemailer": "^10.1.0",
-    "zod": "^4.6.5"
+    "zod": "^4.6.5",
+    "@aegis/ai": "*"
   },
   "devDependencies": {
     "@aegis/worker-discovery": "*",

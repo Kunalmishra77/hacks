@@ -408,7 +408,7 @@ export function createMemoryStore(): Store & { readonly auditEvents: readonly Au
         if (!f) return null;
         const asset = s.assets.find((a) => a.id === f.assetId);
         const scope = asset && s.scopes.find((sc) => sc.id === asset.scopeId && sc.orgId === orgId);
-        return scope ? copy(f) : null;
+        return scope && asset ? { ...copy(f), assetAddress: asset.address } : null;
       },
       async setStatus(orgId, id, status) {
         const f = s.findings.find((x) => x.id === id);
@@ -416,6 +416,14 @@ export function createMemoryStore(): Store & { readonly auditEvents: readonly Au
         const scope = asset && s.scopes.find((sc) => sc.id === asset.scopeId && sc.orgId === orgId);
         if (!f || !scope) return false;
         f.status = status;
+        return true;
+      },
+      async setAiAdvice(orgId, id, advice, model, at) {
+        const f = s.findings.find((x) => x.id === id);
+        const asset = f && s.assets.find((a) => a.id === f.assetId);
+        const scope = asset && s.scopes.find((sc) => sc.id === asset.scopeId && sc.orgId === orgId);
+        if (!f || !scope) return false;
+        Object.assign(f, { aiAdvice: advice, aiModel: model, aiAdviceAt: at });
         return true;
       },
       async newForScan(scanId, since) {

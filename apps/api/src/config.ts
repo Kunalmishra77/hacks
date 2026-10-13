@@ -37,6 +37,11 @@ const EnvSchema = z
     SMTP_FROM: z.string().optional().or(z.literal("").transform(() => undefined)),
     WHATSAPP_PHONE_NUMBER_ID: z.string().optional().or(z.literal("").transform(() => undefined)),
     WHATSAPP_TOKEN: z.string().optional().or(z.literal("").transform(() => undefined)),
+    // AI advisory layer (Phase 7): advisory only, never triggers scans.
+    AI_PROVIDER: z.enum(["off", "openai", "anthropic"]).default("off"),
+    AI_MODEL: z.string().optional().or(z.literal("").transform(() => undefined)),
+    OPENAI_API_KEY: z.string().optional().or(z.literal("").transform(() => undefined)),
+    ANTHROPIC_API_KEY: z.string().optional().or(z.literal("").transform(() => undefined)),
   })
   .refine((e) => e.JWT_SECRET !== e.JWT_REFRESH_SECRET, {
     message: "JWT_SECRET and JWT_REFRESH_SECRET must differ",
@@ -72,6 +77,7 @@ export interface AppConfig {
   smtpUrl?: string;
   smtpFrom?: string;
   whatsapp?: { phoneNumberId: string; token: string };
+  ai?: { provider: "openai" | "anthropic"; apiKey: string; model?: string };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -117,5 +123,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     smtpUrl: e.SMTP_URL,
     smtpFrom: e.SMTP_FROM,
     whatsapp: e.WHATSAPP_PHONE_NUMBER_ID && e.WHATSAPP_TOKEN ? { phoneNumberId: e.WHATSAPP_PHONE_NUMBER_ID, token: e.WHATSAPP_TOKEN } : undefined,
+    ai:
+      e.AI_PROVIDER === "openai" && e.OPENAI_API_KEY
+        ? { provider: "openai" as const, apiKey: e.OPENAI_API_KEY, model: e.AI_MODEL }
+        : e.AI_PROVIDER === "anthropic" && e.ANTHROPIC_API_KEY
+          ? { provider: "anthropic" as const, apiKey: e.ANTHROPIC_API_KEY, model: e.AI_MODEL }
+          : undefined,
   };
 }

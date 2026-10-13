@@ -72,6 +72,9 @@ export interface FindingRecord {
   kevListed: boolean;
   riskScore: number | null;
   enrichedAt: Date | null;
+  aiAdvice: unknown;
+  aiAdviceAt: Date | null;
+  aiModel: string | null;
   firstSeenAt: Date;
   lastSeenAt: Date;
 }
@@ -246,13 +249,15 @@ export interface Store {
       orgId: string,
       filter?: { status?: FindingStatus; severity?: Severity; scopeId?: string; assetId?: string },
     ): Promise<(FindingRecord & { assetAddress: string; assetKind: AssetKind; scopeId: string })[]>;
-    find(orgId: string, id: string): Promise<FindingRecord | null>;
+    find(orgId: string, id: string): Promise<(FindingRecord & { assetAddress: string }) | null>;
     /** Changes a finding's triage status. Returns false if it doesn't exist in the org. */
     setStatus(orgId: string, id: string, status: FindingStatus): Promise<boolean>;
     /** Open/triaged counts per severity, for the dashboard summary. */
     summary(orgId: string): Promise<Record<Severity, number>>;
     /** Findings this scan newly created (firstSeen at/after `since`), for alerts. */
     newForScan(scanId: string, since: Date): Promise<(FindingRecord & { assetAddress: string })[]>;
+    /** Stores AI advisory output on a finding. */
+    setAiAdvice(orgId: string, id: string, advice: Record<string, unknown>, model: string, at: Date): Promise<boolean>;
   };
   /** Read-only view the Scope Authorization Gate uses. */
   schedules: {

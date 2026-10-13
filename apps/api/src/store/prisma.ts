@@ -241,9 +241,18 @@ function build(db: Db, root: PrismaClient): Store {
           scopeId: asset.scopeId,
         }));
       },
-      find: (orgId, id) => db.finding.findFirst({ where: { id, asset: { scope: { orgId } } } }),
+      async find(orgId, id) {
+        const f = await db.finding.findFirst({ where: { id, asset: { scope: { orgId } } }, include: { asset: { select: { address: true } } } });
+        if (!f) return null;
+        const { asset, ...rest } = f;
+        return { ...rest, assetAddress: asset.address };
+      },
       async setStatus(orgId, id, status) {
         const r = await db.finding.updateMany({ where: { id, asset: { scope: { orgId } } }, data: { status } });
+        return r.count === 1;
+      },
+      async setAiAdvice(orgId, id, advice, model, at) {
+        const r = await db.finding.updateMany({ where: { id, asset: { scope: { orgId } } }, data: { aiAdvice: advice as Prisma.InputJsonObject, aiModel: model, aiAdviceAt: at } });
         return r.count === 1;
       },
       async newForScan(scanId, since) {

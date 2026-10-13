@@ -35,6 +35,9 @@ function dto(f: FindingRecord & { assetAddress?: string; assetKind?: string; sco
     enrichedAt: f.enrichedAt,
     firstSeenAt: f.firstSeenAt,
     lastSeenAt: f.lastSeenAt,
+    aiAdvice: f.aiAdvice ?? null,
+    aiModel: f.aiModel ?? null,
+    aiAdviceAt: f.aiAdviceAt ?? null,
   };
 }
 
