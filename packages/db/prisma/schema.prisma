@@ -100,6 +100,13 @@ enum ReportFormat {
   HTML
 }
 
+enum NotificationType {
+  SLACK
+  WEBHOOK
+  EMAIL
+  WHATSAPP
+}
+
 // ───────────────────────── Tenancy & identity ─────────────────────────
 
 model Org {
@@ -113,14 +120,15 @@ model Org {
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
-  memberships   Membership[]
-  teams         Team[]
-  invites       Invite[]
-  scopes        Scope[]
-  scans         Scan[]
-  reports       Report[]
-  apiKeys       ApiKey[]
-  scanSchedules ScanSchedule[]
+  memberships          Membership[]
+  teams                Team[]
+  invites              Invite[]
+  scopes               Scope[]
+  scans                Scan[]
+  reports              Report[]
+  apiKeys              ApiKey[]
+  scanSchedules        ScanSchedule[]
+  notificationChannels NotificationChannel[]
 }
 
 model User {
@@ -380,6 +388,30 @@ model ScanSchedule {
   org   Org    @relation(fields: [orgId], references: [id], onDelete: Cascade)
   scope Scope  @relation(fields: [scopeId], references: [id], onDelete: Cascade)
   scans Scan[]
+
+  @@index([orgId])
+}
+
+// Where new-exposure alerts are sent (Phase 6). `target` is a Slack/webhook
+// URL, an email address, or a WhatsApp phone number, by type.
+model NotificationChannel {
+  id             String           @id @default(uuid()) @db.Uuid
+  orgId          String           @db.Uuid
+  type           NotificationType
+  name           String
+  target         String
+  // Only findings at or above this severity trigger an alert.
+  minSeverity    Severity         @default(HIGH)
+  // Always alert on CISA KEV findings regardless of minSeverity.
+  kevAlways      Boolean          @default(true)
+  enabled        Boolean          @default(true)
+  createdById    String           @db.Uuid
+  lastNotifiedAt DateTime?
+  lastError      String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  org Org @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@index([orgId])
 }
