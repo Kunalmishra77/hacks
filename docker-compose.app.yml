@@ -1,0 +1,58 @@
+# Aegis API + dashboard, for a single host (e.g. a VPS) or local full-stack run.
+# Postgres is Supabase and Redis is managed, so they are NOT in this file — set
+# DATABASE_URL / DIRECT_URL / REDIS_URL in the env. On Coolify, prefer adding
+# each service (api, web, and the workers from docker-compose.workers.yml) as
+# its own application instead of this compose — see docs/DEPLOY_COOLIFY.md.
+#
+#   docker compose -f docker-compose.app.yml --env-file .env up -d --build
+name: aegis-app
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    image: aegis/api:latest
+    environment:
+      NODE_ENV: production
+      API_HOST: 0.0.0.0
+      API_PORT: 4000
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      DIRECT_URL: ${DIRECT_URL:?set DIRECT_URL}
+      REDIS_URL: ${REDIS_URL:?set REDIS_URL}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?set JWT_REFRESH_SECRET}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      CORS_ORIGINS: ${CORS_ORIGINS:?set CORS_ORIGINS to the dashboard origin}
+      API_PUBLIC_URL: ${API_PUBLIC_URL:-}
+      WEB_PUBLIC_URL: ${WEB_PUBLIC_URL:-}
+      NVD_API_KEY: ${NVD_API_KEY:-}
+      AI_PROVIDER: ${AI_PROVIDER:-off}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      SMTP_URL: ${SMTP_URL:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+    ports:
+      - "4000:4000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4000/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?set NEXT_PUBLIC_API_URL to the API's public URL}
+    image: aegis/web:latest
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    depends_on:
+      - api

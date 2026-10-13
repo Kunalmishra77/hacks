@@ -146,7 +146,7 @@ Invite tokens are returned in the API response until email delivery lands in Pha
 Anything a tool returns outside the boundary is dropped before it reaches the database.
 Port scanning is not part of discovery; it's the approval-gated NETWORK engine (Phase 3).
 While a job runs, the worker re-checks the gate every 15 s, so the kill-switch, a scan kill
-or a revoked/expired scope stops it. Deploy workers with [docs/DEPLOY_VPS.md](docs/DEPLOY_VPS.md).
+or a revoked/expired scope stops it. Deploy workers with [docs/DEPLOY_VPS.md](docs/DEPLOY_VPS.md); host the whole app (API, dashboard, workers) on Coolify with [docs/DEPLOY_COOLIFY.md](docs/DEPLOY_COOLIFY.md).
 
 ## Assessment engines (Phase 3)
 
