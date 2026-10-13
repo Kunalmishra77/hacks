@@ -88,6 +88,8 @@ export interface EnrichmentWorkerOptions {
   intel: CveIntel;
   concurrency?: number;
   log?: (msg: string, data?: Record<string, unknown>) => void;
+  /** Called after a scan's findings are enriched — the API dispatches alerts here. */
+  afterEnrich?: (scanId: string, orgId: string) => Promise<void>;
 }
 
 /**
@@ -104,6 +106,10 @@ export function startEnrichmentWorker(opts: EnrichmentWorkerOptions): { worker: 
     async (job: Job<EnrichJobPayload>) => {
       const outcome = await enrichScanFindings(job.data.scanId, { store, intel: opts.intel, log: (m, d) => log(m, { jobId: job.id, ...d }) });
       log("enrichment finished", { jobId: job.id, scanId: job.data?.scanId, ...outcome });
+      // Alerts run after enrichment so risk/KEV are known. Never fail the job on it.
+      if (opts.afterEnrich) {
+        await opts.afterEnrich(job.data.scanId, job.data.orgId).catch((e: Error) => log("afterEnrich failed", { error: e.message }));
+      }
       return outcome;
     },
     { connection, concurrency: opts.concurrency ?? 2, lockDuration: 120_000, maxStalledCount: 1 },
