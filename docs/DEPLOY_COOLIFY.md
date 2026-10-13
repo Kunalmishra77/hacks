@@ -13,6 +13,10 @@ single compose is also fine for a quick start.
 - A Coolify project connected to this Git repo (`github.com/Kunalmishra77/hacks`).
 - Your Supabase `DATABASE_URL` (transaction pooler, port 6543) and `DIRECT_URL`
   (session pooler, port 5432), and a `REDIS_URL`. URL-encode `@` in passwords as `%40`.
+  On `DATABASE_URL` keep `connection_limit=10` (or higher): the API is a
+  long-running server that fires several queries in parallel, and
+  `connection_limit=1` serialises them into pool-timeout errors (P2024/P2028).
+  `connection_limit=1` is only right for serverless, one connection per instance.
 - Two different 32+ char secrets for `JWT_SECRET` and `JWT_REFRESH_SECRET`
   (`node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"`).
 - Decide the two public URLs, e.g. `https://api.aegis.example` and
@@ -29,7 +33,7 @@ single compose is also fine for a quick start.
   NODE_ENV=production
   API_HOST=0.0.0.0
   API_PORT=4000
-  DATABASE_URL=postgresql://postgres.<ref>:<url-encoded-pw>@aws-0-<region>.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1
+  DATABASE_URL=postgresql://postgres.<ref>:<url-encoded-pw>@aws-0-<region>.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=10
   DIRECT_URL=postgresql://postgres.<ref>:<url-encoded-pw>@aws-0-<region>.pooler.supabase.com:5432/postgres
   REDIS_URL=redis://default:<pw>@<host>:<port>
   JWT_SECRET=<48+ random>
