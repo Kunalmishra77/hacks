@@ -124,6 +124,15 @@ cd aegis && git pull
 docker compose -f docker-compose.workers.yml --env-file workers.env up -d --build
 ```
 
+## Scheduling & alerts
+
+The recurring-scan tick and the new-exposure alert dispatch run **in the API
+process**, not in these worker containers — that's where Redis and the SMTP /
+WhatsApp config live. Keep the API running (on your PC for now, or wherever you
+host it) for schedules to fire and alerts to send. The workers only consume the
+scan queues. Slack and generic-webhook alert URLs are set per channel in the UI;
+email and WhatsApp need `SMTP_URL` / `WHATSAPP_*` in the API's `.env`.
+
 ## What's not here yet
 
 - API and dashboard hosting on the VPS (behind HTTPS) comes with a later phase.

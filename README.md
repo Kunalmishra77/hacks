@@ -6,11 +6,11 @@ authorized to test**, and tells it how to fix them. It never exploits, brute-for
 or runs destructive actions. See [CLAUDE.md](CLAUDE.md) for the non-negotiable rules
 and [docs/](docs/) for the PRD, architecture, and scope-authorization design.
 
-> **Status: Phase 5 (Reports) done.** Everything from Phase 0–3.5, plus
-> **shareable reports**: a point-in-time, risk-ranked snapshot of open findings
-> with remediation, rendered as a self-contained HTML document (print to PDF),
-> downloadable in-app or via a signed, expiring link. Cloud posture (Phase 4) and
-> scheduling/monitoring (Phase 6) are next.
+> **Status: Phase 6 (Scheduling & monitoring) done.** Everything from Phase 0–5,
+> plus **recurring scans** on a cron schedule (through the same gate as manual
+> ones) and **new-exposure alerts** to Slack, a webhook, email or WhatsApp when a
+> scan turns up something new and serious. Cloud posture (Phase 4, needs real
+> cloud accounts) and the AI advisory layer (Phase 7) remain.
 
 ## Repository layout
 
@@ -24,6 +24,7 @@ packages/
   worker-kit/ Job lifecycle every worker shares: gate re-check, heartbeat, safe tool runner
   cve/        CVE intel: NVD (CVSS), EPSS, CISA KEV, and the risk-score formula
   report/     Report model + self-contained HTML renderer
+  core/ also: cron scheduling (croner) and alert-message building
 workers/
   discovery/  crt.sh + subfinder (passive) → DNS → httpx liveness
   tls/        testssl.sh wrapper: protocol, cipher and certificate hygiene
@@ -121,6 +122,10 @@ Then sign in at http://localhost:3000/login.
 | GET | `/orgs/:orgId/reports/:id/download` | Viewer+; in-app HTML |
 | POST | `/orgs/:orgId/reports/:id/share` | Analyst+; returns a signed link |
 | GET | `/reports/download?token=…` | public, signed, expiring |
+| GET/POST | `/orgs/:orgId/schedules` | list (Viewer+) / create (Admin+) |
+| PATCH/DELETE | `/orgs/:orgId/schedules/:id` | Admin+ |
+| GET/POST | `/orgs/:orgId/channels` | list (Viewer+) / create (Admin+) |
+| PATCH/DELETE | `/orgs/:orgId/channels/:id` | Admin+ |
 
 Non-members of an org get `404` (not `403`) so org ids can't be probed.
 Invite tokens are returned in the API response until email delivery lands in Phase 6.
@@ -216,6 +221,37 @@ Report bodies are stored in Postgres so a shared link keeps showing the snapshot
 even as findings change. (Wire object storage — Supabase Storage or any
 S3-compatible endpoint — in a later pass if you'd rather keep large bodies out
 of the database.) Every generation and share is audited.
+
+## Scheduling & monitoring (Phase 6)
+
+The Monitoring tab turns one-off scans into continuous coverage.
+
+**Recurring scans.** Schedule a set of engines against a proven boundary on a
+standard cron (hourly at most). A tick in the API process fires due schedules,
+enumerating the scope's assets per engine and requesting each scan through
+`requestScan` — the exact same path a human request takes. A schedule therefore
+can't scan anything a user couldn't: the Scope Authorization Gate still enforces
+verification, allowed engines, the kill-switch, approval (NETWORK stays
+Admin-approved even when scheduled) and the rate/concurrency limits. A failing
+schedule still advances to its next run, so one bad entry can't jam the loop.
+
+**New-exposure alerts.** After a scan's findings are enriched (so severity, risk
+and KEV are known), anything *new* and notable is pushed to your channels:
+
+- **Slack** (incoming-webhook URL) · **Webhook** (POST a JSON alert) ·
+  **Email** (SMTP) · **WhatsApp** (Cloud API).
+
+Each channel has a minimum severity and an "always alert on known-exploited"
+toggle. Only findings first seen in that scan count as new, so you're told about
+changes, not re-told about everything each run. Delivery is best-effort: a
+failing channel is recorded (`lastError`) and skipped, never fatal to the scan.
+Customer-supplied Slack/webhook URLs go through the same SSRF guard as ownership
+verification — no posting to private or loopback addresses. Alert messages carry
+titles, severity and asset — never evidence or secrets.
+
+Both the tick and the dispatcher run in the API process (where Redis and the
+SMTP/WhatsApp config live), not on the scan workers. Set `SCHEDULER=off` to
+disable the tick.
 
 ## Scope Authorization Gate
 
