@@ -6,11 +6,11 @@ authorized to test**, and tells it how to fix them. It never exploits, brute-for
 or runs destructive actions. See [CLAUDE.md](CLAUDE.md) for the non-negotiable rules
 and [docs/](docs/) for the PRD, architecture, and scope-authorization design.
 
-> **Status: Phase 6 (Scheduling & monitoring) done.** Everything from Phase 0–5,
-> plus **recurring scans** on a cron schedule (through the same gate as manual
-> ones) and **new-exposure alerts** to Slack, a webhook, email or WhatsApp when a
-> scan turns up something new and serious. Cloud posture (Phase 4, needs real
-> cloud accounts) and the AI advisory layer (Phase 7) remain.
+> **Status: Phase 7 (AI advisory) done.** Everything from Phase 0–6, plus an
+> **advisory AI layer**: ask an LLM (OpenAI or Anthropic) to explain a finding in
+> plain language, judge how likely it's a false positive, and draft remediation —
+> output a human reviews, clearly labelled, never acted on automatically. Cloud
+> posture (Phase 4, needs real cloud accounts) is the remaining roadmap item.
 
 ## Repository layout
 
@@ -24,6 +24,7 @@ packages/
   worker-kit/ Job lifecycle every worker shares: gate re-check, heartbeat, safe tool runner
   cve/        CVE intel: NVD (CVSS), EPSS, CISA KEV, and the risk-score formula
   report/     Report model + self-contained HTML renderer
+  ai/         Advisory LLM client (OpenAI + Anthropic), prompt + parser
   core/ also: cron scheduling (croner) and alert-message building
 workers/
   discovery/  crt.sh + subfinder (passive) → DNS → httpx liveness
@@ -118,6 +119,7 @@ Then sign in at http://localhost:3000/login.
 | POST | `/orgs/:orgId/kill-switch` | `{engaged:true}` Analyst+, `{engaged:false}` Admin+ |
 | GET | `/orgs/:orgId/findings`, `/orgs/:orgId/findings/:id` | Viewer+; risk-ranked, filterable |
 | POST | `/orgs/:orgId/findings/:id/status` | Analyst+; triage |
+| POST | `/orgs/:orgId/findings/:id/advise` | Analyst+; AI advice (cached; `?refresh=1`) |
 | GET/POST | `/orgs/:orgId/reports` | list (Viewer+) / generate (Analyst+) |
 | GET | `/orgs/:orgId/reports/:id/download` | Viewer+; in-app HTML |
 | POST | `/orgs/:orgId/reports/:id/share` | Analyst+; returns a signed link |
@@ -252,6 +254,30 @@ titles, severity and asset — never evidence or secrets.
 Both the tick and the dispatcher run in the API process (where Redis and the
 SMTP/WhatsApp config live), not on the scan workers. Set `SCHEDULER=off` to
 disable the tick.
+
+## AI advisory (Phase 7)
+
+In an expanded finding, **Explain with AI** asks an LLM to turn the finding into
+a plain-language explanation, a false-positive judgement, and a remediation
+draft. Pick a provider with `AI_PROVIDER` (`openai` or `anthropic`) and set its
+key; `off` (the default) hides the feature. The model override is `AI_MODEL`
+(defaults: `gpt-4o-mini`, or `claude-opus-5-5` for Anthropic).
+
+It is **advisory only**, and the code enforces the ARCHITECTURE §6 rules:
+
+- The AI never starts a scan, picks a target, or acts. Its output is text the
+  UI shows, clearly labelled *"AI suggestion — review before acting"*, with the
+  model and a confidence level. Findings of record still come from the engines.
+- A finding's title and evidence come from scanned systems, so they're
+  **untrusted**: the prompt wraps them and tells the model to treat them as data,
+  not instructions, and never to emit shell commands, exploit code, or targets.
+  (A live test feeds an injected `rm -rf /` in evidence and asserts it's ignored.)
+- Advice is Analyst+, rate-limited per org (it costs money), and cached on the
+  finding so re-viewing doesn't re-bill; `?refresh=1` regenerates. The audit log
+  records that advice was generated and by which model — never the advice text.
+
+The provider is pluggable (`@aegis/ai`): Anthropic goes through the official SDK,
+OpenAI through a small fetch client, both behind one interface.
 
 ## Scope Authorization Gate
 

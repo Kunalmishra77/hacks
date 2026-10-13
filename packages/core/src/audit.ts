@@ -32,6 +32,7 @@ export type AuditAction =
   | "scan.throttled"
   | "scan.rejected"
   | "finding.triaged"
+  | "finding.ai_advised"
   | "report.create"
   | "report.shared"
   | "schedule.create"

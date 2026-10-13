@@ -43,6 +43,8 @@ jobs:
       NEXT_TELEMETRY_DISABLED: "1"
       # Optional: add an NVD_API_KEY repo secret to enable the live CVE intel test.
       NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+      # Optional: add an OPENAI_API_KEY repo secret to enable the live AI test.
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
     steps:
       - uses: actions/checkout@v4
@@ -82,6 +84,15 @@ jobs:
           CVE_LIVE: "1"
         run: npx vitest run test/live.integration.test.ts
         working-directory: packages/cve
+
+      # Live AI advisory, only when the OpenAI key secret is set.
+      - name: AI advisory (live)
+        if: env.OPENAI_API_KEY != ''
+        env:
+          AI_LIVE: "1"
+          AI_PROVIDER: openai
+        run: npx vitest run test/live.integration.test.ts
+        working-directory: packages/ai
 
   # Each worker image must build, run as non-root, and contain working,
   # flag-compatible tools (the Dockerfiles assert the flags we depend on).
